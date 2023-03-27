@@ -185,7 +185,7 @@ You should call the load_core function before the main game loop and if you have
 
 Note if you are on Windows make sure your core ends with `.dll`, on Linux `.so` and on MacOSX `.dylib`, the above example is for MacOSX.
 
-You can download cores for your platform using the LibRetro BuildBot available here: [LibRetro Nightly Builds](https://buildbot.libretro.com/nightly/). 
+You can download cores for your platform using the LibRetro BuildBot available here: [LibRetro Nightly Builds](https://buildbot.libretro.com/nightly/).
 
 # Step 6 - Calling a function from the Core (Dynamic Library)
 
@@ -208,7 +208,7 @@ For more information about retro-init and the callback functions it requires you
 
 # Step 7 - Retrieving a response from the Core
 
-Before we call the setup functions we should make sure that the core is written using a version of the LibRetro API that is compatible with what we expect. 
+Before we call the setup functions we should make sure that the core is written using a version of the LibRetro API that is compatible with what we expect.
 
 The function `retro_api_version` is used for this purpose and at the time of current written just returns the number 1, we can call this function from the core and retrieve its value and print it to the console like so:
 
@@ -231,3 +231,55 @@ fn load_core() {
 ```
 
 # Step 8 - Setting up the environment for the Core
+
+Now to fix that segmentation fault error when calling `retro_init`, all we need to do it set whats called an `**Environment Callback**` function and pass it to the core. The Environment Callback function is used to allow the core to call back to the frontend to request information.
+
+The information they can request comes in the form of a Command ID and is passed back to the core using a data buffer, so the Environment Callback takes in those two paramaters, we can implement this like so:
+
+```rust
+pub type EnvironmentCallback = unsafe extern "C" fn(command: libc::c_uint, data: *mut libc::c_void) -> bool;
+
+unsafe extern "C" fn libretro_environment_callback(command: u32, data: *mut c_void) -> bool {
+    println!("libretro_environment_callbac Called with command: {}", command);
+    false
+}
+
+fn load_core() {
+    unsafe {
+        let core = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
+        let retro_init: unsafe extern "C" fn() = *(core.get(b"retro_init").unwrap());
+        let retro_api_version: unsafe extern "C" fn() -> libc::c_uint = *(core.get(b"retro_api_version").unwrap());
+        let retro_set_environment: unsafe extern "C" fn(callback: EnvironmentCallback) = *(core.get(b"retro_set_environment").unwrap());
+        let api_version = retro_api_version();
+        println!("API Version: {}", api_version);
+        if (api_version != EXPECTED_LIB_RETRO_VERSION) {
+            panic!("The Core has been compiled with a LibRetro API that is unexpected, we expected version to be: {} but it was: {}", EXPECTED_LIB_RETRO_VERSION, api_version)
+        }
+        retro_set_environment(libretro_environment_callback);
+        retro_init();
+    }
+}
+```
+
+If all goes well, when you run the program you will now not get a Segmentation fault (I didn't with the gameboy gambatte core) but it will also print out each call to the environment callback like so:
+
+```rust
+API Version: 1
+callback_environment Called with command: 52
+callback_environment Called with command: 16
+callback_environment Called with command: 69
+callback_environment Called with command: 65581
+callback_environment Called with command: 27
+callback_environment Called with command: 8
+callback_environment Called with command: 70
+callback_environment Called with command: 59
+callback_environment Called with command: 39
+callback_environment Called with command: 15
+callback_environment Called with command: 65587
+callback_environment Called with command: 64
+```
+
+All those integers you see in the output are **Command IDs** and you can see a full list of them if you go to the [LibRetro.h Header File](https://github.com/libretro/libretro-common/blob/master/include/libretro.h), they start with `RETRO_ENVIRONMENT_`.
+
+
+For example you can see that the first value `52` is called `RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION` which is requesting the version of the LibRetro API that we expect future calls to be using.

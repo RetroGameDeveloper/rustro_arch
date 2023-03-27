@@ -4,21 +4,32 @@ extern crate libc;
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use libloading::{Library, Symbol};
+use std::ffi::{c_void, CStr, CString};
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
+
+pub type EnvironmentCallback = unsafe extern "C" fn(command: libc::c_uint, data: *mut libc::c_void) -> bool;
+
+unsafe extern "C" fn libretro_environment_callback(command: u32, data: *mut c_void) -> bool {
+    println!("libretro_environment_callback Called with command: {}", command);
+    false
+}
 
 fn load_core() {
     unsafe {
         let core = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
         let retro_init: unsafe extern "C" fn() = *(core.get(b"retro_init").unwrap());
         let retro_api_version: unsafe extern "C" fn() -> libc::c_uint = *(core.get(b"retro_api_version").unwrap());
+        let retro_set_environment: unsafe extern "C" fn(callback: EnvironmentCallback) = *(core.get(b"retro_set_environment").unwrap());
         let api_version = retro_api_version();
         println!("API Version: {}", api_version);
         if (api_version != EXPECTED_LIB_RETRO_VERSION) {
             panic!("The Core has been compiled with a LibRetro API that is unexpected, we expected version to be: {} but it was: {}", EXPECTED_LIB_RETRO_VERSION, api_version)
         }
+        retro_set_environment(libretro_environment_callback);
+        retro_init();
     }
 }
 
