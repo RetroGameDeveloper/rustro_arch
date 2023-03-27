@@ -185,7 +185,9 @@ You should call the load_core function before the main game loop and if you have
 
 Note if you are on Windows make sure your core ends with `.dll`, on Linux `.so` and on MacOSX `.dylib`, the above example is for MacOSX.
 
-# Step 6 - Calling a function from the Dynamic Library
+You can download cores for your platform using the LibRetro BuildBot available here: [LibRetro Nightly Builds](https://buildbot.libretro.com/nightly/). 
+
+# Step 6 - Calling a function from the Core (Dynamic Library)
 
 As an example lets call the function `retro_init` as it is one of the simplest functions (it doesn't require any parameters).
 
@@ -203,3 +205,23 @@ fn load_core() {
 When running this may actually cause a Segmentation fault depending on which core you use as the function `retro_init` expects a few things to be set before executing. The fact that it caused a segmentation fault in the first place is a good sign in this case and we will fix this in the next step by providing the callback functions that it requires.
 
 For more information about retro-init and the callback functions it requires you can checkout the guide: [Developing Cores for LibRetro](https://docs.libretro.com/development/cores/developing-cores/).
+
+# Step 7 - Retrieving a response from the Core
+
+Before we call the setup functions we should make sure that the core is written using a version of the LibRetro API that is compatible with what we expect. 
+
+The function `retro_api_version` is used for this purpose and at the time of current written just returns the number 1, we can call this function from the core and retrieve its value and print it to the console like so:
+
+```rust
+fn load_core() {
+    unsafe {
+        let core = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
+        let retro_init: unsafe extern "C" fn() = *(core.get(b"retro_init").unwrap());
+        let retro_api_version: unsafe extern "C" fn() -> libc::c_uint = *(core.get(b"retro_api_version").unwrap());
+        let api_version = retro_api_version();
+        println!("API Version: {}", api_version);
+    }
+}
+```
+
+# Step 8 - Setting up the environment for the Core

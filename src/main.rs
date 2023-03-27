@@ -12,7 +12,9 @@ fn load_core() {
     unsafe {
         let core = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
         let retro_init: unsafe extern "C" fn() = *(core.get(b"retro_init").unwrap());
-        retro_init();
+        let retro_api_version: unsafe extern "C" fn() -> libc::c_uint = *(core.get(b"retro_api_version").unwrap());
+        let api_version = retro_api_version();
+        println!("API Version: {}", api_version);
     }
 }
 
