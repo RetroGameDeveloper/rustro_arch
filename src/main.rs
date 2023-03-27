@@ -20,6 +20,11 @@ fn main() {
     let mut y: usize = 0;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        // Clear the buffer to black
+        for pixel in &mut buffer {
+            *pixel = 0x00000000;
+        }
+        
         // Move the pixel when the arrow keys are pressed
         if window.is_key_down(Key::Left) && x > 0 {
             x -= 1;
