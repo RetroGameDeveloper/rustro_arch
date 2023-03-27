@@ -1,4 +1,5 @@
 use minifb::{Key, Window, WindowOptions};
+use std::time::{Duration, Instant};
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
@@ -13,18 +14,29 @@ fn main() {
     ).unwrap_or_else(|e| {
         panic!("{}", e);
     });
-
     window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
 
     let mut x: usize = 0;
     let mut y: usize = 0;
+
+    let mut fps_timer = Instant::now();
+    let mut fps_counter = 0;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         // Clear the buffer to black
         for pixel in &mut buffer {
             *pixel = 0x00000000;
         }
-        
+        // Calculate fps
+        fps_counter += 1;
+        let elapsed = fps_timer.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            let fps = fps_counter as f64 / elapsed.as_secs_f64();
+            window.set_title(&format!("Rust Game (FPS: {:.2})", fps));
+            fps_counter = 0;
+            fps_timer = Instant::now();
+        }
+
         // Move the pixel when the arrow keys are pressed
         if window.is_key_down(Key::Left) && x > 0 {
             x -= 1;
@@ -39,7 +51,7 @@ fn main() {
             y += 1;
         }
 
-        // Set the pixel to blue
+        // Set the current pixel to blue
         buffer[y * WIDTH + x] = 0x0000FFFF;
 
         // Update the window buffer and display the changes
