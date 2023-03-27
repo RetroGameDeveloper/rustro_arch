@@ -1,16 +1,18 @@
 extern crate libloading;
+extern crate libc;
 
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use libloading::{Library, Symbol};
-
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
 
 fn load_core() {
     unsafe {
-        let lib = Library::new("core.dylib").expect("Failed to load Core");
+        let core = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
+        let retro_init: unsafe extern "C" fn() = *(core.get(b"retro_init").unwrap());
+        retro_init();
     }
 }
 

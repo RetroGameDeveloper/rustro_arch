@@ -1,10 +1,12 @@
 # rustro_arch
+
 A small lightweight LibRetro Frontend written in Rust (learning project)
 
 # Step 1 - Setup MiniFB
+
 The first step was just to get a window where we can draw pixels and respond to user input, we want it to be very simple and cross-platform so we can use the `minifb` library.
 
-```
+```rust
 use minifb::{Key, Window, WindowOptions};
 
 const WIDTH: usize = 640;
@@ -53,7 +55,9 @@ fn main() {
 The result of this is that it draws a blue pixel at an x,y position and you can move it around with the arrow keys, note that we don't clear the frame buffer every frame so it keeps all the previous positions as blue pixels too. The end result is you can draw blue lines on the screen.
 
 # Step 2 - Clear the screen every frame
+
 The line effect is cool but we should clear the screen to black every frame so that the player can just move the individual pixel aroun d the screen, you can do this by adding the following code to the start of the loop:
+
 ```rust
 // Clear the buffer to black
 for pixel in &mut buffer {
@@ -62,11 +66,12 @@ for pixel in &mut buffer {
 ```
 
 # Step 3 - Display the Frames per second
+
 That looks great but is it efficinet to loop through the whole array every frame (60 times a second) to set every pixel to black? Probably not, but it would be good to have a way to measure this, lets display the frames per second and we can compare the speed of future changes.
 
 To display the fps, you can use the Instant type from the std::time module to measure the time between frames. Here's an updated version of your code that displays the fps in the window title:
 
-```
+```rust
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 
@@ -132,7 +137,9 @@ fn main() {
 In this updated code, we use an Instant timer to measure the elapsed time between frames. We keep track of the number of frames rendered (fps_counter) and the time elapsed since the last fps update (fps_timer). When a second has passed, we calculate the fps and update the window title using the Window::set_title() method. Finally, we reset the fps counter and timer.
 
 # Step 4 - Using buffer.fill instead of looping through array
+
 Now that we can measure the frames per second we can test to see if using buffer.fill is more efficinet that looping through each pixel and setting to black, so replace the loop with:
+
 ```rust
 buffer.fill(0x00000000);
 ```
@@ -147,21 +154,25 @@ while window.is_open() && !window.is_key_down(Key::Escape) {
 
 This gets a much higher fps, of course this is not particularly useful right now as when creating a game it is unlikely that we will just update a single pixel per frame, but it is good to keep in mind for future optimizations, the less pixels we update per frame the more efficient we can be.
 
-# Step 5 - Call a Dynamic Library (dll/dylib) from the code
+# Step 5 - Load a Dynamic Library (dll/dylib) from the code
+
 All libRetro cores are compiled into platform-specific dynamic libraries (dylib on MacOSX and dll on Windows), we want to be able to call one of these functions from our code in order to get our frontend to do anything.
 
 In order to do this we need to add the **libloading** crate as a dependency inside the **Cargo.toml** file like so:
+
 ```
 [dependencies]
 libloading = "0.7.0"
 ```
 
 Then import the crate at the top of the file like so:
+
 ```
 extern crate libloading;
 ```
 
 We will create a function to load the dynamic library like so:
+
 ```
 fn load_core() {
     unsafe {
@@ -169,3 +180,26 @@ fn load_core() {
     }
 }
 ```
+
+You should call the load_core function before the main game loop and if you have my_library.dylib in your current directory it will load it, otherwise it will print the string "Failed to load Core" and exit.
+
+Note if you are on Windows make sure your core ends with `.dll`, on Linux `.so` and on MacOSX `.dylib`, the above example is for MacOSX.
+
+# Step 6 - Calling a function from the Dynamic Library
+
+As an example lets call the function `retro_init` as it is one of the simplest functions (it doesn't require any parameters).
+
+```rust
+fn load_core() {
+    unsafe {
+        let core = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
+        let retro_init: unsafe extern "C" fn() = *(core.get(b"retro_init").unwrap());
+        retro_init();
+    }
+}
+
+```
+
+When running this may actually cause a Segmentation fault depending on which core you use as the function `retro_init` expects a few things to be set before executing. The fact that it caused a segmentation fault in the first place is a good sign in this case and we will fix this in the next step by providing the callback functions that it requires.
+
+For more information about retro-init and the callback functions it requires you can checkout the guide: [Developing Cores for LibRetro](https://docs.libretro.com/development/cores/developing-cores/).
