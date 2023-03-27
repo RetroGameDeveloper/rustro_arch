@@ -213,6 +213,8 @@ Before we call the setup functions we should make sure that the core is written 
 The function `retro_api_version` is used for this purpose and at the time of current written just returns the number 1, we can call this function from the core and retrieve its value and print it to the console like so:
 
 ```rust
+const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
+
 fn load_core() {
     unsafe {
         let core = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
@@ -220,8 +222,12 @@ fn load_core() {
         let retro_api_version: unsafe extern "C" fn() -> libc::c_uint = *(core.get(b"retro_api_version").unwrap());
         let api_version = retro_api_version();
         println!("API Version: {}", api_version);
+        if (api_version != EXPECTED_LIB_RETRO_VERSION) {
+            panic!("The Core has been compiled with a LibRetro API that is unexpected, we expected version to be: {} but it was: {}", EXPECTED_LIB_RETRO_VERSION, api_version)
+        }
     }
 }
+
 ```
 
 # Step 8 - Setting up the environment for the Core

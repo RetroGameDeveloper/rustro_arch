@@ -7,6 +7,7 @@ use libloading::{Library, Symbol};
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
+const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
 fn load_core() {
     unsafe {
@@ -15,6 +16,9 @@ fn load_core() {
         let retro_api_version: unsafe extern "C" fn() -> libc::c_uint = *(core.get(b"retro_api_version").unwrap());
         let api_version = retro_api_version();
         println!("API Version: {}", api_version);
+        if (api_version != EXPECTED_LIB_RETRO_VERSION) {
+            panic!("The Core has been compiled with a LibRetro API that is unexpected, we expected version to be: {} but it was: {}", EXPECTED_LIB_RETRO_VERSION, api_version)
+        }
     }
 }
 
