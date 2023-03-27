@@ -83,7 +83,7 @@ fn main() {
     ).unwrap_or_else(|e| {
         panic!("{}", e);
     });
-    window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
+   // window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps (commented out to get over 60fps)
 
     let mut x: usize = 0;
     let mut y: usize = 0;
@@ -133,6 +133,39 @@ In this updated code, we use an Instant timer to measure the elapsed time betwee
 
 # Step 4 - Using buffer.fill instead of looping through array
 Now that we can measure the frames per second we can test to see if using buffer.fill is more efficinet that looping through each pixel and setting to black, so replace the loop with:
-```
+```rust
 buffer.fill(0x00000000);
+```
+
+I get slightly higher FPS with buffer.fill, but at the end of the day it is still looping over each pixel, one way we could fix this is to just set the previous pixel to black each frame at the start of the loop, like so:
+
+```rust
+while window.is_open() && !window.is_key_down(Key::Escape) {
+        // Clear the previous pixel to black
+        buffer[y * WIDTH + x] = 0x00000000;
+```
+
+This gets a much higher fps, of course this is not particularly useful right now as when creating a game it is unlikely that we will just update a single pixel per frame, but it is good to keep in mind for future optimizations, the less pixels we update per frame the more efficient we can be.
+
+# Step 5 - Call a Dynamic Library (dll/dylib) from the code
+All libRetro cores are compiled into platform-specific dynamic libraries (dylib on MacOSX and dll on Windows), we want to be able to call one of these functions from our code in order to get our frontend to do anything.
+
+In order to do this we need to add the **libloading** crate as a dependency inside the **Cargo.toml** file like so:
+```
+[dependencies]
+libloading = "0.7.0"
+```
+
+Then import the crate at the top of the file like so:
+```
+extern crate libloading;
+```
+
+We will create a function to load the dynamic library like so:
+```
+fn load_core() {
+    unsafe {
+        let lib = Library::new("my_library.dylib").expect("Failed to load Core");
+    }
+}
 ```

@@ -1,8 +1,18 @@
+extern crate libloading;
+
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
+use libloading::{Library, Symbol};
+
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
+
+fn load_core() {
+    unsafe {
+        let lib = Library::new("core.dylib").expect("Failed to load Core");
+    }
+}
 
 fn main() {
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
@@ -14,8 +24,9 @@ fn main() {
     ).unwrap_or_else(|e| {
         panic!("{}", e);
     });
-    window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
-
+    // window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
+    
+    load_core();
     let mut x: usize = 0;
     let mut y: usize = 0;
 
@@ -23,10 +34,9 @@ fn main() {
     let mut fps_counter = 0;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        // Clear the buffer to black
-        for pixel in &mut buffer {
-            *pixel = 0x00000000;
-        }
+        // Clear the previous pixel to black
+        buffer[y * WIDTH + x] = 0x00000000;
+
         // Calculate fps
         fps_counter += 1;
         let elapsed = fps_timer.elapsed();
