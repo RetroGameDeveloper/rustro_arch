@@ -283,3 +283,86 @@ All those integers you see in the output are **Command IDs** and you can see a f
 
 
 For example you can see that the first value `52` is called `RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION` which is requesting the version of the LibRetro API that we expect future calls to be using.
+
+We could define all these constants outselves, but after a quick google search you can see that there is already a rust library with these defined called `libretro-sys` that we can use instead.
+
+
+# Step 9 - Using the types from libretro-sys cargo
+
+We can now add the following to our `Cargo.toml` file:
+
+```rust
+libretro-sys = "0.1.1"
+```
+
+
+Now that we are using the `libretro-sys` library we can refactor the function a bit to use the `CoreAPI` type provided the the library and implement the rest of the functions, to look like this:
+
+```rust
+use libretro_sys::CoreAPI;
+
+fn load_core() -> (Library, CoreAPI) {
+    unsafe {
+        let dylib = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
+  
+        let core_api = CoreAPI {
+            retro_set_environment: *(dylib.get(b"retro_set_environment").unwrap()),
+            retro_set_video_refresh: *(dylib.get(b"retro_set_video_refresh").unwrap()),
+            retro_set_audio_sample: *(dylib.get(b"retro_set_audio_sample").unwrap()),
+            retro_set_audio_sample_batch: *(dylib.get(b"retro_set_audio_sample_batch").unwrap()),
+            retro_set_input_poll: *(dylib.get(b"retro_set_input_poll").unwrap()),
+            retro_set_input_state: *(dylib.get(b"retro_set_input_state").unwrap()),
+
+            retro_init: *(dylib.get(b"retro_init").unwrap()),
+            retro_deinit: *(dylib.get(b"retro_deinit").unwrap()),
+
+            retro_api_version: *(dylib.get(b"retro_api_version").unwrap()),
+
+            retro_get_system_info: *(dylib.get(b"retro_get_system_info").unwrap()),
+            retro_get_system_av_info: *(dylib.get(b"retro_get_system_av_info").unwrap()),
+            retro_set_controller_port_device: *(dylib.get(b"retro_set_controller_port_device").unwrap()),
+
+            retro_reset: *(dylib.get(b"retro_reset").unwrap()),
+            retro_run: *(dylib.get(b"retro_run").unwrap()),
+
+            retro_serialize_size: *(dylib.get(b"retro_serialize_size").unwrap()),
+            retro_serialize: *(dylib.get(b"retro_serialize").unwrap()),
+            retro_unserialize: *(dylib.get(b"retro_unserialize").unwrap()),
+
+            retro_cheat_reset: *(dylib.get(b"retro_cheat_reset").unwrap()),
+            retro_cheat_set: *(dylib.get(b"retro_cheat_set").unwrap()),
+
+            retro_load_game: *(dylib.get(b"retro_load_game").unwrap()),
+            retro_load_game_special: *(dylib.get(b"retro_load_game_special").unwrap()),
+            retro_unload_game: *(dylib.get(b"retro_unload_game").unwrap()),
+
+            retro_get_region: *(dylib.get(b"retro_get_region").unwrap()),
+            retro_get_memory_data: *(dylib.get(b"retro_get_memory_data").unwrap()),
+            retro_get_memory_size: *(dylib.get(b"retro_get_memory_size").unwrap()),
+        };
+
+        let api_version = (core_api.retro_api_version)();
+        println!("API Version: {}", api_version);
+        if (api_version != EXPECTED_LIB_RETRO_VERSION) {
+            panic!("The Core has been compiled with a LibRetro API that is unexpected, we expected version to be: {} but it was: {}", EXPECTED_LIB_RETRO_VERSION, api_version)
+        }
+        (core_api.retro_set_environment)(libretro_environment_callback);
+        (core_api.retro_init)();
+        return (dylib, core_api);
+    }
+
+```
+
+I return the CoreAPI so we can call the functions in the rest of the code as it will be useful to call `retro_run` to render every frame inside the loop where we currently draw the blue pixel.
+
+
+Here is an example of how we can call and use this new structure:
+
+```rust
+unsafe {
+        let (dylib, core_api) = load_core();
+        (core_api.retro_init)();
+    }
+```
+
+If I am honest I only returned the dylib as I have not yet figured out Rust memory-management and if I don't return it then the library memory will be cleaned up causing the retro_init call to cause a Segmentation Fault. I could have passed in the dylib object to the function instead but I wanted to keep the dylib logic out of the main function. I will come back to this when I know more about Rust.
