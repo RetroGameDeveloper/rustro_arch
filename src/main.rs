@@ -1,5 +1,6 @@
 extern crate libloading;
 extern crate libc;
+use clap::{App, Arg};
 
 use libretro_sys::CoreAPI;
 use minifb::{Key, Window, WindowOptions};
@@ -18,9 +19,9 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, data: *mut c_vo
     false
 }
 
-fn load_core() -> (Library, CoreAPI) {
+fn load_core(library_path: String) -> (CoreAPI) {
     unsafe {
-        let dylib = Library::new("gambatte_libretro.dylib").expect("Failed to load Core");
+        let dylib = Box::leak(Box::new(Library::new(library_path).expect("Failed to load Core")));
         
         let core_api = CoreAPI {
             retro_set_environment: *(dylib.get(b"retro_set_environment").unwrap()),
@@ -65,14 +66,46 @@ fn load_core() -> (Library, CoreAPI) {
         }
         (core_api.retro_set_environment)(libretro_environment_callback);
         (core_api.retro_init)();
-        return (dylib, core_api);
+        return core_api;
     }
+}
+
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+}
+
+fn parse_command_line_arguments() -> EmulatorState {
+    let matches = App::new("RustroArch")
+        .arg(
+            Arg::with_name("rom_name")
+                .help("Sets the path to the ROM file to load")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::with_name("library_name")
+                .help("Sets the path to the libRetro core to use")
+                .short("L")
+                .takes_value(true),
+        )
+        .get_matches();
+
+    let rom_name = matches.value_of("rom_name").unwrap();
+    let library_name = matches.value_of("library_name").unwrap_or("default_library");
+    println!("ROM name: {}", rom_name);
+    println!("Core Library name: {}", library_name);
+    return EmulatorState {
+        rom_name: rom_name.to_string(), core_name: library_name.to_string()
+    }
+    
 }
 
 fn main() {
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
+    let emulator_state = parse_command_line_arguments();
     let mut window = Window::new(
-        "Rust Game",
+        "RustroArch",
         WIDTH,
         HEIGHT,
         WindowOptions::default(),
@@ -82,8 +115,9 @@ fn main() {
     // window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
     
     unsafe {
-        let (dylib, core_api) = load_core();
+        let core_api = load_core(emulator_state.core_name);
         (core_api.retro_init)();
+        println!("About to load ROM: {}", emulator_state.rom_name)
     }
 
     let mut x: usize = 0;
@@ -101,7 +135,7 @@ fn main() {
         let elapsed = fps_timer.elapsed();
         if elapsed >= Duration::from_secs(1) {
             let fps = fps_counter as f64 / elapsed.as_secs_f64();
-            window.set_title(&format!("Rust Game (FPS: {:.2})", fps));
+            window.set_title(&format!("RustroArch (FPS: {:.2})", fps));
             fps_counter = 0;
             fps_timer = Instant::now();
         }

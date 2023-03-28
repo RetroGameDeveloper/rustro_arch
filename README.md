@@ -365,4 +365,72 @@ unsafe {
     }
 ```
 
-If I am honest I only returned the dylib as I have not yet figured out Rust memory-management and if I don't return it then the library memory will be cleaned up causing the retro_init call to cause a Segmentation Fault. I could have passed in the dylib object to the function instead but I wanted to keep the dylib logic out of the main function. I will come back to this when I know more about Rust.
+If I am honest I only returned the dylib as I have not yet figured out Rust memory-management and if I don't return it then the library memory will be cleaned up causing the retro_init call to cause a Segmentation Fault. I could have passed in the dylib object to the function instead but I wanted to keep the dylib logic out of the main function. I will come back to this when I know more about Rust. 
+
+Since this basically leaks memory already we could change it to:
+
+```rust
+        let dylib = Box::leak(Box::new(Library::new("gambatte_libretro.dylib").expect("Failed to load Core")));
+```
+
+Then it will not need to be returned and will not cause a segmentation fault.
+
+Although this is just temporary, in the future we will move all this into its own data structure with additional settings, if/when we add the ability to change cores on the fly.
+
+# Step 10 - Read Command Line arguments for ROM to load
+
+Currently we have hard-coded the dynamic library into the code but now we can write code to read both the core to load and the ROM name to load from the command line arguments.
+
+
+In order to be a drop-in replacement for RetroArch we should try to use the same command Line options, which are available on their website [here](https://docs.libretro.com/guides/cli-intro/).
+
+
+The use the prefix -L to specify the core to load and the default parameter is the ROM file to play.
+
+
+To do this lets first create a new structure to hold the current emulator state such as the rom that is loaded and the core to use:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    library_name: String,
+}
+```
+
+
+Now lets write a function using the `clap` crate to parse the command line arguments and return them in our brand new structure:
+
+```rust
+fn parse_command_line_arguments() -> EmulatorState {
+    let matches = App::new("RustroArch")
+        .arg(
+            Arg::with_name("rom_name")
+                .help("Sets the path to the ROM file to load")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::with_name("library_name")
+                .help("Sets the path to the libRetro core to use")
+                .short("L")
+                .takes_value(true),
+        )
+        .get_matches();
+
+    let rom_name = matches.value_of("rom_name").unwrap();
+    let library_name = matches.value_of("library_name").unwrap_or("default_library");
+    println!("ROM name: {}", rom_name);
+    println!("Core Library name: {}", library_name);
+    return EmulatorState {
+        rom_name: rom_name.to_string(), core_name: library_name.to_string()
+    }
+  
+}
+```
+
+
+You now need to pass a ROM file to the program in order to get past the argument parsing logic like so:
+
+```rust
+ cargo build --release && ./target/release/rustro_arch Tetris.gb -L ./gambatte_libretro.dylib
+```
