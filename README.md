@@ -545,6 +545,83 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: String) -> bool {
 }
 ```
 
-Now lets support ``RETRO_ENVIRONMENT_GET_CAN_DUPE``by 
+Now lets support ``RETRO_ENVIRONMENT_GET_CAN_DUPE``by changing our `libretro_environment_callback` function to check if the command is `ENVIRONMENT_GET_CAN_DUPE`, this is a good use for the rust `match` statement:
+
+```rust
+unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
+  
+    match command {
+        ENVIRONMENT_GET_CAN_DUPE => println!("ENVIRONMENT_GET_CAN_DUPE"),
+        _ => println!("libretro_environment_callback Called with command: {}", command)
+    }
+    false
+}
+```
+
+This will print `ENVIRONMENT_GET_CAN_DUPE` when the command comes in but it will still not get past the logic in Gambatte as we need to return the value true into the `return_data` buffer. To do this we can use the c-like syn tax to set the dereferenced pointer to the boolean true value like so:
+
+```rust
+*(return_data as *mut bool) = true; // Set the return_data to the value true
+```
 
 On a side note I have not yet found out what exactly ``RETRO_ENVIRONMENT_GET_CAN_DUPE`` is for, apparently GameBoy generates two identical frames back-to-back, so apparently the frontend needs to support being able to duplicate the same frame in order to maintain timing.
+
+
+So we now have the environment callback function like so:
+
+```rust
+unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
+  
+    match command {
+        ENVIRONMENT_GET_CAN_DUPE => {
+            *(return_data as *mut bool) = true; // Set the return_data to the value true
+            println!("Set ENVIRONMENT_GET_CAN_DUPE to true");
+        },
+        _ => println!("libretro_environment_callback Called with command: {}", command)
+    }
+    false
+}
+```
+
+This gets past the dupe frames error but still fails on ROM load with the message:
+
+```rust
+[Gambatte] RGB565 is not supported.
+```
+
+
+Again looking at the Gambatte source code we can find out where it fails [here](https://github.com/libretro/gambatte-libretro/blob/4c64b5285b88a08b8134f6c36177fdca56d46192/libgambatte/libretro/libretro.cpp#L2502) so we need to implement the `RETRO_ENVIRONMENT_SET_PIXEL_FORMAT` command too, returning true is enough to get past this check for now, but in the near future we will need to save the pixel format when we want to draw the buffer to the screen:
+
+```rust
+unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
+  
+    match command {
+        libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
+            *(return_data as *mut bool) = true; // Set the return_data to the value true
+            println!("Set ENVIRONMENT_GET_CAN_DUPE to true");
+        },
+        libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
+            println!("TODO: Handle ENVIRONMENT_SET_PIXEL_FORMAT when we start drawing the the screen buffer");
+            return true;
+        }
+        _ => println!("libretro_environment_callback Called with command: {}", command)
+    }
+    false
+}
+```
+
+After this change Gambatte gets pretty far in loading the ROM which we can see by looking at the console messages before causing a segmentation fault:
+
+```rust
+TODO: Set ENVIRONMENT_SET_PIXEL_FORMAT to something
+libretro_environment_callback Called with command: 9
+[Gambatte] No system directory defined, unable to look for 'gbc_bios.bin'.
+libretro_environment_callback Called with command: 15
+[Gambatte] Plain ROM loaded.
+[Gambatte] rambanks: 0
+[Gambatte] rombanks: 2
+[Gambatte] Got internal game name: TETRIS.
+libretro_environment_callback Called with command: 15
+libretro_environment_callback Called with command: 65578
+[1]    62190 segmentation fault  ./target/release/rustro_arch Tetris.gb -L ./gambatte_libretro.dylib
+```

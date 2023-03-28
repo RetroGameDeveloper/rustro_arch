@@ -18,7 +18,14 @@ pub type EnvironmentCallback = unsafe extern "C" fn(command: libc::c_uint, data:
 unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
     
     match command {
-        ENVIRONMENT_GET_CAN_DUPE => println!("ENVIRONMENT_GET_CAN_DUPE"),
+        libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
+            *(return_data as *mut bool) = true; // Set the return_data to the value true
+            println!("Set ENVIRONMENT_GET_CAN_DUPE to true");
+        },
+        libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
+            println!("TODO: Handle ENVIRONMENT_SET_PIXEL_FORMAT when we start drawing the the screen buffer");
+            return true;
+        }
         _ => println!("libretro_environment_callback Called with command: {}", command)
     }
     false
