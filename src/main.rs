@@ -2,7 +2,7 @@ extern crate libloading;
 extern crate libc;
 use clap::{App, Arg};
 
-use libretro_sys::{CoreAPI, GameInfo};
+use libretro_sys::{CoreAPI, GameInfo, ENVIRONMENT_GET_CAN_DUPE};
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use libloading::{Library};
@@ -15,8 +15,12 @@ const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
 pub type EnvironmentCallback = unsafe extern "C" fn(command: libc::c_uint, data: *mut libc::c_void) -> bool;
 
-unsafe extern "C" fn libretro_environment_callback(command: u32, data: *mut c_void) -> bool {
-    println!("libretro_environment_callback Called with command: {}", command);
+unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
+    
+    match command {
+        ENVIRONMENT_GET_CAN_DUPE => println!("ENVIRONMENT_GET_CAN_DUPE"),
+        _ => println!("libretro_environment_callback Called with command: {}", command)
+    }
     false
 }
 
@@ -102,7 +106,7 @@ fn parse_command_line_arguments() -> EmulatorState {
     
 }
 
-unsafe fn load_rom_file(core_api: CoreAPI, rom_name: String) {
+unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: String) -> bool {
     let rom_name_cptr = CString::new(rom_name.clone()).expect("Failed to create CString").as_ptr();
     let contents = fs::read(rom_name).expect("Failed to read file");
     let data: *const c_void = contents.as_ptr() as *const c_void;
@@ -112,7 +116,11 @@ unsafe fn load_rom_file(core_api: CoreAPI, rom_name: String) {
         size: contents.len(),
         meta: ptr::null(),
     };
-    (core_api.retro_load_game)(&game_info);
+    let was_load_successful = (core_api.retro_load_game)(&game_info);
+    if (!was_load_successful) {
+        panic!("Rom Load was not successful");
+    }
+    return was_load_successful;
 }
 
 fn main() {
@@ -132,7 +140,8 @@ fn main() {
         let core_api = load_core(emulator_state.core_name);
         (core_api.retro_init)();
         println!("About to load ROM: {}", emulator_state.rom_name);
-        load_rom_file(core_api, emulator_state.rom_name);
+        load_rom_file(&core_api, emulator_state.rom_name);
+        (core_api.retro_run)();
     }
 
     let mut x: usize = 0;

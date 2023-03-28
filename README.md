@@ -501,3 +501,50 @@ unsafe {
    load_rom_file(core_api, emulator_state.rom_name);
 }
 ```
+
+Note that when running the Tetris ROM with gambatte core it now prints out:
+
+```rust
+[Gambatte] Cannot dupe frames!
+```
+
+Looking in the Gambatte source code for this statement we find: [This code](https://github.com/libretro/gambatte-libretro/blob/4c64b5285b88a08b8134f6c36177fdca56d46192/libgambatte/libretro/libretro.cpp#L2412)
+
+```rust
+bool retro_load_game(const struct retro_game_info *info)
+{
+   bool can_dupe = false;
+   environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &can_dupe);
+   if (!can_dupe)
+   {
+      gambatte_log(RETRO_LOG_ERROR, "Cannot dupe frames!\n");
+      return false;
+   }
+```
+
+Which highlights two things, one is that `retro_load_game` returns a boolean whether or not it succcessfully loads the ROM or not and also that we need to properly implemnent the enivironment callback so that we can return true for `RETRO_ENVIRONMENT_GET_CAN_DUPE` to get past this logic.
+
+For the boolean return value lets read the value and exit if it was not successful:
+
+```rust
+unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: String) -> bool {
+    let rom_name_cptr = CString::new(rom_name.clone()).expect("Failed to create CString").as_ptr();
+    let contents = fs::read(rom_name).expect("Failed to read file");
+    let data: *const c_void = contents.as_ptr() as *const c_void;
+    let game_info = GameInfo {
+        path: rom_name_cptr,
+        data,
+        size: contents.len(),
+        meta: ptr::null(),
+    };
+    let was_load_successful = (core_api.retro_load_game)(&game_info);
+    if (!was_load_successful) {
+        panic!("Rom Load was not successful");
+    }
+    return was_load_successful;
+}
+```
+
+Now lets support ``RETRO_ENVIRONMENT_GET_CAN_DUPE``by 
+
+On a side note I have not yet found out what exactly ``RETRO_ENVIRONMENT_GET_CAN_DUPE`` is for, apparently GameBoy generates two identical frames back-to-back, so apparently the frontend needs to support being able to duplicate the same frame in order to maintain timing.
