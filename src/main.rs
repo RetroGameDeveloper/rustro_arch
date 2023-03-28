@@ -2,11 +2,12 @@ extern crate libloading;
 extern crate libc;
 use clap::{App, Arg};
 
-use libretro_sys::CoreAPI;
+use libretro_sys::{CoreAPI, GameInfo};
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use libloading::{Library};
-use std::ffi::{c_void};
+use std::ffi::{c_void, CString};
+use std::{ptr, fs};
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
@@ -101,6 +102,19 @@ fn parse_command_line_arguments() -> EmulatorState {
     
 }
 
+unsafe fn load_rom_file(core_api: CoreAPI, rom_name: String) {
+    let rom_name_cptr = CString::new(rom_name.clone()).expect("Failed to create CString").as_ptr();
+    let contents = fs::read(rom_name).expect("Failed to read file");
+    let data: *const c_void = contents.as_ptr() as *const c_void;
+    let game_info = GameInfo {
+        path: rom_name_cptr,
+        data,
+        size: contents.len(),
+        meta: ptr::null(),
+    };
+    (core_api.retro_load_game)(&game_info);
+}
+
 fn main() {
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
     let emulator_state = parse_command_line_arguments();
@@ -117,7 +131,8 @@ fn main() {
     unsafe {
         let core_api = load_core(emulator_state.core_name);
         (core_api.retro_init)();
-        println!("About to load ROM: {}", emulator_state.rom_name)
+        println!("About to load ROM: {}", emulator_state.rom_name);
+        load_rom_file(core_api, emulator_state.rom_name);
     }
 
     let mut x: usize = 0;

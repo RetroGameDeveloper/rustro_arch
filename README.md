@@ -434,3 +434,70 @@ You now need to pass a ROM file to the program in order to get past the argument
 ```rust
  cargo build --release && ./target/release/rustro_arch Tetris.gb -L ./gambatte_libretro.dylib
 ```
+
+
+# Step 11 - Loading the ROM file
+
+Now that we have the path of the ROM file to load we need to pass it to our core using the `retro_load_game` function. The function takes in a structure which the Rust `libretro-sys` crate calls `GameInfo`. 
+
+Lets look at the definition of the `GameInfo` struct:
+
+```rust
+pub struct GameInfo {
+    // Path to game, UTF-8 encoded. Usually used as a reference. May be NULL if rom
+    // was loaded from stdin or similar. retro_system_info::need_fullpath guaranteed
+    // that this path is valid.
+    pub path: *const libc::c_char,
+
+    // Memory buffer of loaded game. Will be NULL if need_fullpath was set.
+    pub data: *const libc::c_void,
+
+    // Size of memory buffer.
+    pub size: libc::size_t,
+
+    // String of implementation specific meta-data.
+    pub meta: *const libc::c_char,
+}
+```
+
+To populate this we need to convert our Rust rom_name string into a `*const libc::c_char` and also open copy all the bytes from the ROM file and put it im a buffer that we can pass to the data field.
+
+For the first part we can use Foreign Function Interface (FFI) crate, specifically the `std::ffi::CString` type to convert to a C pointer like so:
+
+```rust
+use std::ffi::{c_void, CString};
+
+let rom_name_cptr = CString::new(rom_name).expect("Failed to create CString").as_ptr();
+```
+
+Now to load the ROM file and put all its bytes into a `*const libc::c_void` buffer, you can use the `std::fs::read` function to read the file into a `Vec <u8>`, and then use the  `as_ptr()` method to obtain a pointer to the underlying bytes.
+
+
+
+So lets create a function to load the ROM and pass it to the libRetro core:
+
+```rust
+unsafe fn load_rom_file(core_api: CoreAPI, rom_name: String) {
+    let rom_name_cptr = CString::new(rom_name.clone()).expect("Failed to create CString").as_ptr();
+    let contents = fs::read(rom_name).expect("Failed to read file");
+    let data: *const c_void = contents.as_ptr() as *const c_void;
+    let game_info = GameInfo {
+        path: rom_name_cptr,
+        data,
+        size: contents.len(),
+        meta: ptr::null(),
+    };
+    (core_api.retro_load_game)(&game_info);
+}
+```
+
+We can call this function just before the main game loop:
+
+```rust
+unsafe {
+   let core_api = load_core(emulator_state.core_name);
+   (core_api.retro_init)();
+   println!("About to load ROM: {}", emulator_state.rom_name);
+   load_rom_file(core_api, emulator_state.rom_name);
+}
+```
