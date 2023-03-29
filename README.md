@@ -724,4 +724,192 @@ libretro_set_input_state_callback
 
 Now that we have the core running it would be nice to actually see what the emulator is doing, for that we need to get the pixel buffer and display it instead of our moving blue pixel.
 
-To get the pixel buffer from the libretro core we need to
+To get the pixel buffer from the libretro core we need to properly implement the `libretro_set_video_refresh_callback` we just created a dummy for as it is called every frame when the core has finished writing all the pixels to the frame buffer. 
+
+The width and height parameter will be useful as it is the size of the frame in pixels, but I need to find out what the pitch variable is used for. You can print out the values every frame like so:
+
+```rust
+unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch)
+}
+```
+
+For the gambatte core it is currently printing this out every frame:
+
+```rust
+libretro_set_video_refresh_callback, width: 160, height: 144, pitch: 512
+```
+
+So the width and height look correct but lets quickly find out what pitch is and why it is set to 512, I decided to do the mordern thing ans asked ChatGPT, we got the following response:
+
+>  In the context of libretro, pitch refers to the number of bytes between two vertically adjacent pixels in an image. It is also sometimes called the "stride" or "line stride".
+>
+> The pitch value is important because many image processing algorithms and hardware acceleration APIs require that images be stored in memory in a specific format with a specific pitch value. If an image's pitch value does not match the expected value, it can cause visual artifacts or errors in processing.
+
+It gave a better explanation than my google seach, but 512 pixels between two vertical pixels seems like quite a lot, we will come back to this soon, but lets at least see what the frame_buffer looks like.
+
+The `frame_buffer_data` parameter contains all the pixel data to display, so lets at least print it out to the console to see what we are dealing with:
+
+```rust
+unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch);
+    let length_of_frame_buffer = width*height;
+    let slice = std::slice::from_raw_parts(frame_buffer_data as *const u8, length_of_frame_buffer as usize);
+    println!("Frame Buffer: {:?}", slice);
+}
+```
+
+This runs for a little bit and then causes a segmentation fault, if we remove the println then it will run successfully, so presumably either the frame buffer memory is being deleted while we are printing it or the `frame_buffer_data` is being passed as a null pointer, both could cause the segmentation fault.
+
+First lets check if `frame_buffer_data` is a null pointer and return if it is:
+
+```rust
+unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    if (frame_buffer_data == ptr::null()) {
+        println!("frame_buffer_data was null");
+        return;
+    }
+    println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch);
+    let length_of_frame_buffer = width*height;
+    let slice = std::slice::from_raw_parts(frame_buffer_data as *const u8, length_of_frame_buffer as usize);
+    println!("Frame Buffer: {:?}", slice);
+}
+```
+
+This fixes the segmentation fault and highlights a piece of useful information, that the frame_buffer_data is sometimes null, this could be related to the dupe frames mentioned earlier, maybe if it is null it expects the frontend to just display the previous frame?
+
+
+# Step 14 - Displaying the Pixel Buffer to the screen
+
+Now we have a buffer of pixels from the core, we need to figure out how we can display them to the screen, we have two problems to solve:
+
+* We got the buffer of pixels in our callback function but how do we get that data into the main game loop to draw to our screen?
+* We need to figure out the format that the pixel buffer is in, e.g how many bytes represent red, green, blue etc and is there alpha (transparency) information in the format?
+
+For the first problem all I can think of is creating a global variable which we can access in both the callback function and in the main game loop, there is probably a much better way to do this in rust as global variables are generally bad practise but it will do for now. Maybe at the end of this project when I know more rust I can go back and refactor the code with explanations of why.
+
+We can use our existing struct called `EmulatorState` for the global variable and add an optional frame buffer into the definiton, in rust you can create an optional field like so:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u8>>,
+}
+
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+}
+
+```
+
+Now before we initialise the core lets set this global variable to have the current rom name and core name and an empty `frame_buffer` so lets change this previous line:
+
+```rust
+    let emulator_state = parse_command_line_arguments();
+```
+
+To instead use the global variable:
+
+```rust
+unsafe { CURRENT_EMULATOR_STATE = parse_command_line_arguments() };
+```
+
+Note that the unsafe block is required as we are modifying global state, which is not thread safe, exactly why we shouldn't be using a global variable, maybe we could put the libRetro callback as a closure inside the main function along with the variable, but that wouldn't work as the callback needs to be marked as `extern` for the core to call it, anyway lets see if we can get the pixel buffer from the callback first.
+
+
+Lets set the frame_buffer on our global variable:
+
+```rust
+unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    if (frame_buffer_data == ptr::null()) {
+        println!("frame_buffer_data was null");
+        return;
+    }
+    println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch);
+    let length_of_frame_buffer = width*height;
+    let buffer_slice = std::slice::from_raw_parts(frame_buffer_data as *const u8, length_of_frame_buffer as usize);
+
+    // Create a Vec<u8> from the slice
+    let buffer_vec = Vec::from(buffer_slice);
+
+    // Wrap the Vec<u8> in a Some Option and assign it to the frame_buffer field
+    CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
+    println!("Frame Buffer: {:?}", CURRENT_EMULATOR_STATE.frame_buffer);
+}
+```
+
+Excellent so the frame_buffer has been successfully set on the global variable we should be able to access it from the main game loop!
+
+
+So lets replace the old code that we were using to display the moving blue pixel example, from this:
+
+```rust
+window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+```
+
+To this:
+
+```rust
+unsafe {
+        match &CURRENT_EMULATOR_STATE.frame_buffer {
+            Some(buffer) => {
+                // Do something with buffer
+                let slice_u32: &[u32] = unsafe {
+                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len() / 4)
+                }; // convert to &[u32] slice reference
+                window.update_with_buffer(slice_u32, WIDTH, HEIGHT).unwrap();
+            }
+            None => {
+                // Handle the case where frame_buffer is None
+                println!("We don't have a buffer to display");
+            }
+        }
+    }
+```
+
+Since the frame_buffer is optional we need to handle that using the common rust patten of using a match statement.
+
+The `update_with_buffer` functionneed to take a u32 array but our buffer was a u8 array so we convert it and then pass it to the function.
+
+Bare in mind we are just presuming (incorrectly) that the pixel format returned by the core will match exactly what the `minifb` library expects. So we are expecting this to put nonsense on the screen until we convert the pixel format from the core to match what `minifb` expects.
+
+But first lets run and we realise that we get this error:
+
+```rust
+Update failed because input buffer is too small. Required size for 640 (640 stride) x 480 buffer is 1228800\n            bytes but the size of the input buffer has the size 23040 bytes
+```
+
+We are only passing 23040 bytes because we multipiled the width and height together and presumed that each pixel was a single byte which is of course incorrect.
+
+
+But just to get something to display on the screen based on thsi frame buffer lets do a little hack and just fill up the rest of the buffer with the value 0 (black) like so:
+
+```rust
+unsafe {
+        match &CURRENT_EMULATOR_STATE.frame_buffer {
+            Some(buffer) => {
+                // Do something with buffer
+                let slice_u32: &[u32] = unsafe {
+                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len() / 4)
+                }; // convert to &[u32] slice reference
+                // Temporary hack jhust to display SOMETHING on the screen
+                let mut vec: Vec<u32> = slice_u32.to_vec();
+                vec.resize( 1228800, 0);
+                window.update_with_buffer(&vec, WIDTH, HEIGHT).unwrap();
+            }
+            None => {
+                // Handle the case where frame_buffer is None
+                println!("We don't have a buffer to display");
+            }
+        }
+    }
+```
+
+
+
+# Step 15 - Handling the core Pixel Format
+
+ok lets handle the Pixel format correctly.

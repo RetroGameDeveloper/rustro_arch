@@ -13,9 +13,34 @@ const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u8>>,
+}
 
-unsafe extern "C" fn libretro_set_video_refresh_callback(data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
-    println!("libretro_set_video_refresh_callback")
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+};
+
+
+unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    if (frame_buffer_data == ptr::null()) {
+        println!("frame_buffer_data was null");
+        return;
+    }
+    println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch);
+    let length_of_frame_buffer = width*height;
+    let buffer_slice = std::slice::from_raw_parts(frame_buffer_data as *const u8, length_of_frame_buffer as usize);
+
+    // Create a Vec<u8> from the slice
+    let buffer_vec = Vec::from(buffer_slice);
+
+    // Wrap the Vec<u8> in an Some Option and assign it to the frame_buffer field
+    CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
+    // println!("Frame Buffer: {:?}", CURRENT_EMULATOR_STATE.frame_buffer);
 }
 
 unsafe extern "C" fn libretro_set_input_poll_callback() {
@@ -38,7 +63,7 @@ unsafe extern "C" fn libretro_set_audio_sample_batch_callback(data: *const i16, 
 
 unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
     
-    let result = match command {
+   return match command {
         libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
             *(return_data as *mut bool) = true; // Set the return_data to the value true
             println!("Set ENVIRONMENT_GET_CAN_DUPE to true");
@@ -56,13 +81,16 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *m
             println!("TODO: Handle ENVIRONMENT_SET_CONTROLLER_INFO");
             true
         },
+        libretro_sys::ENVIRONMENT_GET_VARIABLE_UPDATE => {
+            // Return true when we have changed variables that the core needs to know about, but we don't change anything yet
+            false
+        },
         _ => {println!("libretro_environment_callback Called with command: {}", command); false}
     };
-    result
 }
 
 
-unsafe fn load_core(library_path: String) -> (CoreAPI) {
+unsafe fn load_core(library_path: &String) -> (CoreAPI) {
     unsafe {
         let dylib = Box::leak(Box::new(Library::new(library_path).expect("Failed to load Core")));
         
@@ -118,10 +146,6 @@ unsafe fn load_core(library_path: String) -> (CoreAPI) {
     }
 }
 
-struct EmulatorState {
-    rom_name: String,
-    core_name: String,
-}
 
 fn parse_command_line_arguments() -> EmulatorState {
     let matches = App::new("RustroArch")
@@ -144,12 +168,12 @@ fn parse_command_line_arguments() -> EmulatorState {
     println!("ROM name: {}", rom_name);
     println!("Core Library name: {}", library_name);
     return EmulatorState {
-        rom_name: rom_name.to_string(), core_name: library_name.to_string()
+        rom_name: rom_name.to_string(), core_name: library_name.to_string(), frame_buffer: None
     }
     
 }
 
-unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: String) -> bool {
+unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
     let rom_name_cptr = CString::new(rom_name.clone()).expect("Failed to create CString").as_ptr();
     let contents = fs::read(rom_name).expect("Failed to read file");
     let data: *const c_void = contents.as_ptr() as *const c_void;
@@ -169,7 +193,7 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: String) -> bool {
 
 fn main() {
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
-    let emulator_state = parse_command_line_arguments();
+    unsafe { CURRENT_EMULATOR_STATE = parse_command_line_arguments() };
     let mut window = Window::new(
         "RustroArch",
         WIDTH,
@@ -187,10 +211,10 @@ fn main() {
     let core_api;
     
     unsafe {
-        core_api = load_core(emulator_state.core_name);
+        core_api = load_core(&CURRENT_EMULATOR_STATE.core_name);
         (core_api.retro_init)();
-        println!("About to load ROM: {}", emulator_state.rom_name);
-        load_rom_file(&core_api, emulator_state.rom_name);
+        println!("About to load ROM: {}", CURRENT_EMULATOR_STATE.rom_name);
+        load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
     }
 
     window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Limit to ~60fps
@@ -232,7 +256,26 @@ fn main() {
         // Set the current pixel to blue
         buffer[y * WIDTH + x] = 0x0000FFFF;
 
+    unsafe {
+        match &CURRENT_EMULATOR_STATE.frame_buffer {
+            Some(buffer) => {
+                // Do something with buffer
+                let slice_u32: &[u32] = unsafe {
+                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len() / 4)
+                }; // convert to &[u32] slice reference
+                // Temporary hack jhust to display SOMETHING on the screen
+                let mut vec: Vec<u32> = slice_u32.to_vec();
+                vec.resize( 1228800, 0);
+                window.update_with_buffer(&vec, WIDTH, HEIGHT).unwrap();
+            }
+            None => {
+                // Handle the case where frame_buffer is None
+                println!("We don't have a buffer to display");
+            }
+        }
+    }
+
         // Update the window buffer and display the changes
-        window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+        // window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
     }
 }
