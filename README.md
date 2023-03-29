@@ -566,7 +566,6 @@ This will print `ENVIRONMENT_GET_CAN_DUPE` when the command comes in but it will
 
 On a side note I have not yet found out what exactly ``RETRO_ENVIRONMENT_GET_CAN_DUPE`` is for, apparently GameBoy generates two identical frames back-to-back, so apparently the frontend needs to support being able to duplicate the same frame in order to maintain timing.
 
-
 So we now have the environment callback function like so:
 
 ```rust
@@ -610,7 +609,7 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *m
 }
 ```
 
-After this change Gambatte gets pretty far in loading the ROM which we can see by looking at the console messages before causing a segmentation fault:
+After this change Gambatte gets pretty far in loading the ROM which we can see by looking at the console messages:
 
 ```rust
 TODO: Set ENVIRONMENT_SET_PIXEL_FORMAT to something
@@ -623,5 +622,90 @@ libretro_environment_callback Called with command: 15
 [Gambatte] Got internal game name: TETRIS.
 libretro_environment_callback Called with command: 15
 libretro_environment_callback Called with command: 65578
-[1]    62190 segmentation fault  ./target/release/rustro_arch Tetris.gb -L ./gambatte_libretro.dylib
+```
+
+I am going to ignore the `gbc_bios.bin` error message for now, Tetris isn't a GBC game and I believe the BIOS is optional for this emulator anyway.
+
+# Step 12 - Running the core with retro_run
+
+Lets now see what happens when we request the core to run a whole frame of emulation, we can do this with the `retro_run` function like so:
+
+```rust
+ unsafe {
+        let core_api = load_core(emulator_state.core_name);
+        (core_api.retro_init)();
+        println!("About to load ROM: {}", emulator_state.rom_name);
+        load_rom_file(&core_api, emulator_state.rom_name);
+        (core_api.retro_run)();
+    }
+```
+
+Unfortunately this causes a segmentation fault as soon as we call it without printing anything new to the console:
+
+```rust
+ROM was successfully loaded
+[1]    63265 segmentation fault  ./target/release/rustro_arch Tetris.gb -L ./gambatte_libretro.dylib
+```
+
+Bare in mind that so far we have been implementing the bare minimum of the libRetro API to get to this point, so it is likely it is requesting something we have not yet implemented. So lets have a look at what [libretro.h](https://github.com/libretro/libretro-common/blob/master/include/libretro.h) says is guarantted to be called before retro_run:
+
+```rust
+/* Sets callbacks. retro_set_environment() is guaranteed to be called
+ * before retro_init().
+ *
+ * The rest of the set_* functions are guaranteed to have been called
+ * before the first call to retro_run() is made. */
+RETRO_API void retro_set_environment(retro_environment_t);
+RETRO_API void retro_set_video_refresh(retro_video_refresh_t);
+RETRO_API void retro_set_audio_sample(retro_audio_sample_t);
+RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t);
+RETRO_API void retro_set_input_poll(retro_input_poll_t);
+RETRO_API void retro_set_input_state(retro_input_state_t);
+```
+
+We have already implemented the environment callback, but lets create dummy implementations for each of the others so we can be sure that it isn't one of these missing functions causing the segmentation fault.
+
+First create the dummy callback functions at the top of the file:
+
+```rust
+unsafe extern "C" fn libretro_set_video_refresh_callback(data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    println!("libretro_set_video_refresh_callback")
+}
+
+unsafe extern "C" fn libretro_set_input_poll_callback() {
+    println!("libretro_set_input_poll_callback")
+}
+
+unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+    println!("libretro_set_input_state_callback");
+    return 1;
+}
+
+unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
+    println!("libretro_set_audio_sample_callback");
+}
+
+unsafe extern "C" fn libretro_set_audio_sample_batch_callback(data: *const i16, frames: libc::size_t) -> libc::size_t {
+    println!("libretro_set_audio_sample_batch_callback");
+    return 1;
+}
+```
+
+As these are dummy functions we just print the function name that was called and if it requires a return value we just return the number 1, we will find out what we need to implement these later on.
+
+Now pass them to the core after the call to `retro_init` like so:
+
+```rust
+(core_api.retro_init)();
+(core_api.retro_set_video_refresh)(libretro_set_video_refresh_callback);
+(core_api.retro_set_input_poll)(libretro_set_input_poll_callback);
+(core_api.retro_set_input_state)(libretro_set_input_state_callback);
+(core_api.retro_set_audio_sample)(libretro_set_audio_sample_callback);
+(core_api.retro_set_audio_sample_batch)(libretro_set_audio_sample_batch_callback);
+```
+
+Now run the program and success it doesn't cause a segmentation fault! Lets now move the `retro_run` call into the main game loop so it calls the core every frame:
+
+```rust
+
 ```

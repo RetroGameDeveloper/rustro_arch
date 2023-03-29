@@ -13,7 +13,28 @@ const WIDTH: usize = 640;
 const HEIGHT: usize = 480;
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
-pub type EnvironmentCallback = unsafe extern "C" fn(command: libc::c_uint, data: *mut libc::c_void) -> bool;
+
+unsafe extern "C" fn libretro_set_video_refresh_callback(data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    println!("libretro_set_video_refresh_callback")
+}
+
+unsafe extern "C" fn libretro_set_input_poll_callback() {
+    println!("libretro_set_input_poll_callback")
+}
+
+unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+    println!("libretro_set_input_state_callback");
+    return 1;
+}
+
+unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
+    println!("libretro_set_audio_sample_callback");
+}
+
+unsafe extern "C" fn libretro_set_audio_sample_batch_callback(data: *const i16, frames: libc::size_t) -> libc::size_t {
+    println!("libretro_set_audio_sample_batch_callback");
+    return 1;
+}
 
 unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
     
@@ -25,11 +46,20 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *m
         libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
             println!("TODO: Handle ENVIRONMENT_SET_PIXEL_FORMAT when we start drawing the the screen buffer");
             return true;
-        }
+        },
+        libretro_sys::ENVIRONMENT_SET_MEMORY_MAPS => {
+            println!("TODO: Handle ENVIRONMENT_SET_MEMORY_MAPS");
+            return true;
+        },
+        libretro_sys::ENVIRONMENT_SET_CONTROLLER_INFO => {
+            println!("TODO: Handle ENVIRONMENT_SET_CONTROLLER_INFO");
+            return true;
+        },
         _ => println!("libretro_environment_callback Called with command: {}", command)
     }
     false
 }
+
 
 fn load_core(library_path: String) -> (CoreAPI) {
     unsafe {
@@ -78,6 +108,11 @@ fn load_core(library_path: String) -> (CoreAPI) {
         }
         (core_api.retro_set_environment)(libretro_environment_callback);
         (core_api.retro_init)();
+        (core_api.retro_set_video_refresh)(libretro_set_video_refresh_callback);
+        (core_api.retro_set_input_poll)(libretro_set_input_poll_callback);
+        (core_api.retro_set_input_state)(libretro_set_input_state_callback);
+        (core_api.retro_set_audio_sample)(libretro_set_audio_sample_callback);
+        (core_api.retro_set_audio_sample_batch)(libretro_set_audio_sample_batch_callback);
         return core_api;
     }
 }
@@ -127,6 +162,7 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: String) -> bool {
     if (!was_load_successful) {
         panic!("Rom Load was not successful");
     }
+    println!("ROM was successfully loaded");
     return was_load_successful;
 }
 
@@ -141,7 +177,7 @@ fn main() {
     ).unwrap_or_else(|e| {
         panic!("{}", e);
     });
-    // window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
+    window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
     
     unsafe {
         let core_api = load_core(emulator_state.core_name);
