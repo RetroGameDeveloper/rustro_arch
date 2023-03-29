@@ -19,49 +19,50 @@ unsafe extern "C" fn libretro_set_video_refresh_callback(data: *const libc::c_vo
 }
 
 unsafe extern "C" fn libretro_set_input_poll_callback() {
-    println!("libretro_set_input_poll_callback")
+    // println!("libretro_set_input_poll_callback")
 }
 
 unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
-    println!("libretro_set_input_state_callback");
+    // println!("libretro_set_input_state_callback");
     return 1;
 }
 
 unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
-    println!("libretro_set_audio_sample_callback");
+    // println!("libretro_set_audio_sample_callback");
 }
 
 unsafe extern "C" fn libretro_set_audio_sample_batch_callback(data: *const i16, frames: libc::size_t) -> libc::size_t {
-    println!("libretro_set_audio_sample_batch_callback");
+    // println!("libretro_set_audio_sample_batch_callback");
     return 1;
 }
 
 unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
     
-    match command {
+    let result = match command {
         libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
             *(return_data as *mut bool) = true; // Set the return_data to the value true
             println!("Set ENVIRONMENT_GET_CAN_DUPE to true");
+            false
         },
         libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
             println!("TODO: Handle ENVIRONMENT_SET_PIXEL_FORMAT when we start drawing the the screen buffer");
-            return true;
+            true
         },
         libretro_sys::ENVIRONMENT_SET_MEMORY_MAPS => {
             println!("TODO: Handle ENVIRONMENT_SET_MEMORY_MAPS");
-            return true;
+            true
         },
         libretro_sys::ENVIRONMENT_SET_CONTROLLER_INFO => {
             println!("TODO: Handle ENVIRONMENT_SET_CONTROLLER_INFO");
-            return true;
+            true
         },
-        _ => println!("libretro_environment_callback Called with command: {}", command)
-    }
-    false
+        _ => {println!("libretro_environment_callback Called with command: {}", command); false}
+    };
+    result
 }
 
 
-fn load_core(library_path: String) -> (CoreAPI) {
+unsafe fn load_core(library_path: String) -> (CoreAPI) {
     unsafe {
         let dylib = Box::leak(Box::new(Library::new(library_path).expect("Failed to load Core")));
         
@@ -177,23 +178,30 @@ fn main() {
     ).unwrap_or_else(|e| {
         panic!("{}", e);
     });
-    window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // ~60fps
+    
+    let mut x: usize = 0;
+    let mut y: usize = 0;
+    
+    let mut fps_timer = Instant::now();
+    let mut fps_counter = 0;
+    let core_api;
     
     unsafe {
-        let core_api = load_core(emulator_state.core_name);
+        core_api = load_core(emulator_state.core_name);
         (core_api.retro_init)();
         println!("About to load ROM: {}", emulator_state.rom_name);
         load_rom_file(&core_api, emulator_state.rom_name);
-        (core_api.retro_run)();
     }
 
-    let mut x: usize = 0;
-    let mut y: usize = 0;
-
-    let mut fps_timer = Instant::now();
-    let mut fps_counter = 0;
+    window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Limit to ~60fps
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+
+        // Call the libRetro core every frame
+        unsafe {
+            (core_api.retro_run)();
+        }
+
         // Clear the previous pixel to black
         buffer[y * WIDTH + x] = 0x00000000;
 

@@ -281,11 +281,9 @@ callback_environment Called with command: 64
 
 All those integers you see in the output are **Command IDs** and you can see a full list of them if you go to the [LibRetro.h Header File](https://github.com/libretro/libretro-common/blob/master/include/libretro.h), they start with `RETRO_ENVIRONMENT_`.
 
-
 For example you can see that the first value `52` is called `RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION` which is requesting the version of the LibRetro API that we expect future calls to be using.
 
 We could define all these constants outselves, but after a quick google search you can see that there is already a rust library with these defined called `libretro-sys` that we can use instead.
-
 
 # Step 9 - Using the types from libretro-sys cargo
 
@@ -294,7 +292,6 @@ We can now add the following to our `Cargo.toml` file:
 ```rust
 libretro-sys = "0.1.1"
 ```
-
 
 Now that we are using the `libretro-sys` library we can refactor the function a bit to use the `CoreAPI` type provided the the library and implement the rest of the functions, to look like this:
 
@@ -355,7 +352,6 @@ fn load_core() -> (Library, CoreAPI) {
 
 I return the CoreAPI so we can call the functions in the rest of the code as it will be useful to call `retro_run` to render every frame inside the loop where we currently draw the blue pixel.
 
-
 Here is an example of how we can call and use this new structure:
 
 ```rust
@@ -365,7 +361,7 @@ unsafe {
     }
 ```
 
-If I am honest I only returned the dylib as I have not yet figured out Rust memory-management and if I don't return it then the library memory will be cleaned up causing the retro_init call to cause a Segmentation Fault. I could have passed in the dylib object to the function instead but I wanted to keep the dylib logic out of the main function. I will come back to this when I know more about Rust. 
+If I am honest I only returned the dylib as I have not yet figured out Rust memory-management and if I don't return it then the library memory will be cleaned up causing the retro_init call to cause a Segmentation Fault. I could have passed in the dylib object to the function instead but I wanted to keep the dylib logic out of the main function. I will come back to this when I know more about Rust.
 
 Since this basically leaks memory already we could change it to:
 
@@ -381,12 +377,9 @@ Although this is just temporary, in the future we will move all this into its ow
 
 Currently we have hard-coded the dynamic library into the code but now we can write code to read both the core to load and the ROM name to load from the command line arguments.
 
-
 In order to be a drop-in replacement for RetroArch we should try to use the same command Line options, which are available on their website [here](https://docs.libretro.com/guides/cli-intro/).
 
-
 The use the prefix -L to specify the core to load and the default parameter is the ROM file to play.
-
 
 To do this lets first create a new structure to hold the current emulator state such as the rom that is loaded and the core to use:
 
@@ -396,7 +389,6 @@ struct EmulatorState {
     library_name: String,
 }
 ```
-
 
 Now lets write a function using the `clap` crate to parse the command line arguments and return them in our brand new structure:
 
@@ -428,17 +420,15 @@ fn parse_command_line_arguments() -> EmulatorState {
 }
 ```
 
-
 You now need to pass a ROM file to the program in order to get past the argument parsing logic like so:
 
 ```rust
  cargo build --release && ./target/release/rustro_arch Tetris.gb -L ./gambatte_libretro.dylib
 ```
 
-
 # Step 11 - Loading the ROM file
 
-Now that we have the path of the ROM file to load we need to pass it to our core using the `retro_load_game` function. The function takes in a structure which the Rust `libretro-sys` crate calls `GameInfo`. 
+Now that we have the path of the ROM file to load we need to pass it to our core using the `retro_load_game` function. The function takes in a structure which the Rust `libretro-sys` crate calls `GameInfo`.
 
 Lets look at the definition of the `GameInfo` struct:
 
@@ -471,8 +461,6 @@ let rom_name_cptr = CString::new(rom_name).expect("Failed to create CString").as
 ```
 
 Now to load the ROM file and put all its bytes into a `*const libc::c_void` buffer, you can use the `std::fs::read` function to read the file into a `Vec <u8>`, and then use the  `as_ptr()` method to obtain a pointer to the underlying bytes.
-
-
 
 So lets create a function to load the ROM and pass it to the libRetro core:
 
@@ -587,7 +575,6 @@ This gets past the dupe frames error but still fails on ROM load with the messag
 ```rust
 [Gambatte] RGB565 is not supported.
 ```
-
 
 Again looking at the Gambatte source code we can find out where it fails [here](https://github.com/libretro/gambatte-libretro/blob/4c64b5285b88a08b8134f6c36177fdca56d46192/libgambatte/libretro/libretro.cpp#L2502) so we need to implement the `RETRO_ENVIRONMENT_SET_PIXEL_FORMAT` command too, returning true is enough to get past this check for now, but in the near future we will need to save the pixel format when we want to draw the buffer to the screen:
 
@@ -707,5 +694,34 @@ Now pass them to the core after the call to `retro_init` like so:
 Now run the program and success it doesn't cause a segmentation fault! Lets now move the `retro_run` call into the main game loop so it calls the core every frame:
 
 ```rust
+ unsafe {
+        let core_api = load_core(emulator_state.core_name);
+        (core_api.retro_init)();
+        println!("About to load ROM: {}", emulator_state.rom_name);
+        load_rom_file(&core_api, emulator_state.rom_name);
+    }
+  
+    window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Limit to ~60fps
 
+    while window.is_open() && !window.is_key_down(Key::Escape) {
+
+        // Call the libRetro core every frame
+        unsafe {
+            (core_api.retro_run)();
+        }
 ```
+
+Excellent so we can now run the core every frame and you will see a lot of lines printed to the console where it calls our callback functions such as:
+
+```rust
+libretro_set_audio_sample_batch_callback
+libretro_environment_callback Called with command: 17
+libretro_set_input_poll_callback
+libretro_set_input_state_callback
+```
+
+# Step 13 - Get the pixel buffer from the core
+
+Now that we have the core running it would be nice to actually see what the emulator is doing, for that we need to get the pixel buffer and display it instead of our moving blue pixel.
+
+To get the pixel buffer from the libretro core we need to
