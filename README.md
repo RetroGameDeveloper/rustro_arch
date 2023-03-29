@@ -665,7 +665,7 @@ unsafe extern "C" fn libretro_set_input_poll_callback() {
 
 unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
     println!("libretro_set_input_state_callback");
-    return 1;
+    return 0; // Hard coded 0 for now means nothing is pressed
 }
 
 unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
@@ -678,7 +678,7 @@ unsafe extern "C" fn libretro_set_audio_sample_batch_callback(data: *const i16, 
 }
 ```
 
-As these are dummy functions we just print the function name that was called and if it requires a return value we just return the number 1, we will find out what we need to implement these later on.
+As these are dummy functions we just print the function name that was called and if it requires a return value we just return the number 0, we will find out what we need to implement these later on.
 
 Now pass them to the core after the call to `retro_init` like so:
 
@@ -912,4 +912,207 @@ unsafe {
 
 # Step 15 - Handling the core Pixel Format
 
-ok lets handle the Pixel format correctly.
+Ok lets finally handle the Pixel format correctly, do you remember this dummy code block we created earlier:
+
+```rust
+libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
+            println!("TODO: Handle ENVIRONMENT_SET_PIXEL_FORMAT when we start drawing the the screen buffer");
+            true
+        },
+```
+
+This is where the core tells us the format it will write the Pixel buffer in, different cores will write in different pixel formats so we need to be able to handle the following formats which we can see in [libretro.h](https://github.com/libretro/libretro-common/blob/master/include/libretro.h#L3010):
+
+* RETRO_PIXEL_FORMAT_0RGB1555
+  * You can read this as `0,Red,Green,Blue`
+  * 1 bit at the start that is always zero
+  * 5 bits for red
+  * 5 bits for green
+  * 5 bits for blue
+  * 16 bits total (2 bytes per pixel)
+* RETRO_PIXEL_FORMAT_XRGB8888
+  * You can read this as `Nothing,Red,Green,Blue`
+  * 8 bits at the start that are unused (X)
+  * 8 bits for red
+  * 8 bits for green
+  * 8 bits for blue
+  * 32 bits total (4 bytes per pixel)
+* RETRO_PIXEL_FORMAT_RGB565
+  * You can read this as `Red,Green,Blue`
+  * 5 bits for red
+  * 6 bits for green (Humans are better at seeing moire shades of green than red/blue)
+  * 5 bits for blue
+  * 16 bits total (2 bytes per pixel))
+* RETRO_PIXEL_FORMAT_UNKNOWN
+  * No idea how to handle this apart from just displaying and error and exiting
+
+
+So which format does our `minifb` library use to display its buffer? Well a quick look at the [documentation](https://docs.rs/minifb/0.24.0/minifb/struct.Window.html#method.update_with_buffer) comes up with this statement:
+
+>  Updates the window with a 32-bit pixel buffer. The encoding for each pixel is 0RGB: The upper 8-bits are ignored, the next 8-bits are for the red channel, the next 8-bits afterwards for the green channel, and the lower 8-bits for the blue channel.
+
+Which is the same as `RETRO_PIXEL_FORMAT_XRGB8888`, so the good news is that cores that give us the pixel buffer in this format will be slightly more efficient as we won't need to convert it to this format every frame!
+
+Lets first find out what pixel format we get with the Gambatte emulator core by modifying the `ENVIRONMENT_SET_PIXEL_FORMAT` match case statement:
+
+```rust
+libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
+            let pixel_format = *(return_data as *const u32);
+            println!("Set ENVIRONMENT_SET_PIXEL_FORMAT to: {}", pixel_format);
+            true
+        },
+```
+
+For the Gambatte core this prints out:
+
+```rust
+Set ENVIRONMENT_SET_PIXEL_FORMAT to: 2
+```
+
+What does 2 mean? Well we can check the `libretro-sys` library to see if there is a nice ENUM name for the values and then print it out using a match statement:
+
+```rust
+libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
+            let pixel_format = *(return_data as *const u32);
+            let pixel_format_as_enum = PixelFormat::from_uint(pixel_format).unwrap();
+            match pixel_format_as_enum {
+                PixelFormat::ARGB1555 => println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_0RGB1555 format"),
+                PixelFormat::RGB565 => println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_RGB565 format"),
+                PixelFormat::ARGB8888 => println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_XRGB8888 format"),
+                _ => panic!("Core is trying to use an Unknown Pixel Format")
+            }
+            true
+        },
+```
+
+Now when we run this code with the Gambatte core it prints out: 
+
+```rust
+Core will send us pixel data in the RGB565 format
+```
+
+This is a bit of a shame as if it was ``RETRO_PIXEL_FORMAT_XRGB8888`` we could pass it directly to `minifb` and be done, note that we will need to find some libRetro cores that use ``RETRO_PIXEL_FORMAT_XRGB8888`` and another that uses `RETRO_PIXEL_FORMAT_0RGB1555` in order to make sure our frontend can support all the known pixel foprmats that a core can use.
+
+We will need to save the pixel format in our global variable so we can reference it later when we need to convert the frame buffer between the formats, so lets add a new field to the struct:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u8>>,
+    pixel_format: PixelFormat
+}
+
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+    pixel_format: PixelFormat::ARGB8888
+};
+```
+
+I set the default value to the 32 byte version as `minifb` uses that but it should always be overridden by the core anyway.
+
+
+# Step 16 - Converting one Pixel Format to another
+
+Now that we have saved the pixel format into the global variable we can use it to convert the buffer from the core's pixel format into the `minifb` pixel format. 
+
+So lets have a look at the video refresh callback function again:
+
+```rust
+unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    if (frame_buffer_data == ptr::null()) {
+        println!("frame_buffer_data was null");
+        return;
+    }
+    // println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch);
+    let length_of_frame_buffer = width*height;
+    let buffer_slice = std::slice::from_raw_parts(frame_buffer_data as *const u8, length_of_frame_buffer as usize);
+
+    // Create a Vec<u8> from the slice
+    let buffer_vec = Vec::from(buffer_slice);
+
+    // Wrap the Vec<u8> in an Some Option and assign it to the frame_buffer field
+    CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
+    // println!("Frame Buffer: {:?}", CURRENT_EMULATOR_STATE.frame_buffer);
+}
+```
+
+Note that we set the `length_of_frame_buffer` variable to the width multiplied by the height, but that would only be correct if it was one byte per pixel, now that we know the core's Pixel Format we can implement this correctly.
+
+We need to also multiply it by the number of bytes-per-pixel, as far as I can see there is nowhere in `libretro-sys` to get the number of bits/bytes from the `PixelFormat`. So I manually mapped it using a match statement and added it as another field on the global variable:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u8>>,
+    pixel_format: PixelFormat,
+    bytes_per_pixel: u8 // its only either 2 or 4 bytes per pixel in libretro
+}
+
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+    pixel_format: PixelFormat::ARGB8888,
+    bytes_per_pixel: 4
+};
+```
+
+We can now calculate this value and save it into the global like so:
+
+```rust
+libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
+            let pixel_format = *(return_data as *const u32);
+            let pixel_format_as_enum = PixelFormat::from_uint(pixel_format).unwrap();
+            CURRENT_EMULATOR_STATE.pixel_format = pixel_format_as_enum;
+            match pixel_format_as_enum {
+                PixelFormat::ARGB1555 => {
+                    println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_0RGB1555 format");
+                    CURRENT_EMULATOR_STATE.bytes_per_pixel = 2;
+                },
+                PixelFormat::RGB565 => {
+                    println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_RGB565 format");
+                    CURRENT_EMULATOR_STATE.bytes_per_pixel = 2;
+                }
+                PixelFormat::ARGB8888 => {
+                    println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_XRGB8888 format");
+                    CURRENT_EMULATOR_STATE.bytes_per_pixel = 4;
+                },
+                _ => {
+                    panic!("Core is trying to use an Unknown Pixel Format")
+                }
+            }
+            true
+        },
+```
+
+
+```rust
+fn convert_pixel_array_from_RGB565_to_XRGB8888(color_array: &[u8]) -> Box<[u32]> {
+    let bytes_per_pixel = 2;
+    assert_eq!(color_array.len() % bytes_per_pixel, 0, "color_array length must be a multiple of 2 (16-bits per pixel)");
+
+    let num_pixels = color_array.len() / bytes_per_pixel;
+    let mut result = vec![0u32; num_pixels];
+
+    for i in 0..num_pixels {
+        let first_byte = color_array[bytes_per_pixel*i];
+        let second_byte = color_array[(bytes_per_pixel*i)+1];
+        let red = (first_byte & 0b1111_1000) >> 3;
+        let green = ((first_byte & 0b0000_0111) << 3) + ((second_byte & 0b1110_0000) >> 5);
+        let blue = second_byte & 0b0001_1111;
+    
+        // Use high bits for empty low bits
+        let red = (red << 3) | (red >> 2);
+        let green = (green << 2) | (green >> 3);
+        let blue = (blue << 3) | (blue >> 2);
+
+        result[i] = ((red as u32) << 16) | ((green as u32) << 8) | (blue as u32);
+    }
+
+    result.into_boxed_slice()
+}
+```

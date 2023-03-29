@@ -2,7 +2,7 @@ extern crate libloading;
 extern crate libc;
 use clap::{App, Arg};
 
-use libretro_sys::{CoreAPI, GameInfo, ENVIRONMENT_GET_CAN_DUPE};
+use libretro_sys::{CoreAPI, GameInfo, PixelFormat};
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use libloading::{Library};
@@ -16,14 +16,43 @@ const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 struct EmulatorState {
     rom_name: String,
     core_name: String,
-    frame_buffer: Option<Vec<u8>>,
+    frame_buffer: Option<Vec<u32>>,
+    pixel_format: PixelFormat,
+    bytes_per_pixel: u8 // its only either 2 or 4 bytes per pixel in libretro
 }
 
 static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     rom_name: String::new(),
     core_name: String::new(),
     frame_buffer: None,
+    pixel_format: PixelFormat::ARGB8888,
+    bytes_per_pixel: 4
 };
+
+fn convert_pixel_array_from_RGB565_to_XRGB8888(color_array: &[u8]) -> Box<[u32]> {
+    let bytes_per_pixel = 2;
+    assert_eq!(color_array.len() % bytes_per_pixel, 0, "color_array length must be a multiple of 2 (16-bits per pixel)");
+
+    let num_pixels = color_array.len() / bytes_per_pixel;
+    let mut result = vec![0u32; num_pixels];
+
+    for i in 0..num_pixels {
+        let first_byte = color_array[bytes_per_pixel*i];
+        let second_byte = color_array[(bytes_per_pixel*i)+1];
+        let red = (first_byte & 0b1111_1000) >> 3;
+        let green = ((first_byte & 0b0000_0111) << 3) + ((second_byte & 0b1110_0000) >> 5);
+        let blue = second_byte & 0b0001_1111;
+
+        // Use high bits for empty low bits
+        let red = (red << 3) | (red >> 2);
+        let green = (green << 2) | (green >> 3);
+        let blue = (blue << 3) | (blue >> 2);
+
+        result[i] = ((red as u32) << 16) | ((green as u32) << 8) | (blue as u32);
+    }
+
+    result.into_boxed_slice()
+}
 
 
 unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
@@ -31,12 +60,13 @@ unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *con
         println!("frame_buffer_data was null");
         return;
     }
-    println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch);
-    let length_of_frame_buffer = width*height;
+    // println!("libretro_set_video_refresh_callback, width: {}, height: {}, pitch: {}", width, height, pitch);
+    let mut length_of_frame_buffer = ((pitch as u32) * height) * CURRENT_EMULATOR_STATE.bytes_per_pixel as u32;
     let buffer_slice = std::slice::from_raw_parts(frame_buffer_data as *const u8, length_of_frame_buffer as usize);
+    let result = convert_pixel_array_from_RGB565_to_XRGB8888(buffer_slice);
 
     // Create a Vec<u8> from the slice
-    let buffer_vec = Vec::from(buffer_slice);
+    let buffer_vec = Vec::from(result);
 
     // Wrap the Vec<u8> in an Some Option and assign it to the frame_buffer field
     CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
@@ -49,7 +79,7 @@ unsafe extern "C" fn libretro_set_input_poll_callback() {
 
 unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
     // println!("libretro_set_input_state_callback");
-    return 1;
+    return 0; // Hard coded 0 for now means nothing is pressed
 }
 
 unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
@@ -70,7 +100,26 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *m
             false
         },
         libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
-            println!("TODO: Handle ENVIRONMENT_SET_PIXEL_FORMAT when we start drawing the the screen buffer");
+            let pixel_format = *(return_data as *const u32);
+            let pixel_format_as_enum = PixelFormat::from_uint(pixel_format).unwrap();
+            CURRENT_EMULATOR_STATE.pixel_format = pixel_format_as_enum;
+            match pixel_format_as_enum {
+                PixelFormat::ARGB1555 => {
+                    println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_0RGB1555 format");
+                    CURRENT_EMULATOR_STATE.bytes_per_pixel = 2;
+                },
+                PixelFormat::RGB565 => {
+                    println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_RGB565 format");
+                    CURRENT_EMULATOR_STATE.bytes_per_pixel = 2;
+                }
+                PixelFormat::ARGB8888 => {
+                    println!("Core will send us pixel data in the RETRO_PIXEL_FORMAT_XRGB8888 format");
+                    CURRENT_EMULATOR_STATE.bytes_per_pixel = 4;
+                },
+                _ => {
+                    panic!("Core is trying to use an Unknown Pixel Format")
+                }
+            }
             true
         },
         libretro_sys::ENVIRONMENT_SET_MEMORY_MAPS => {
@@ -168,7 +217,7 @@ fn parse_command_line_arguments() -> EmulatorState {
     println!("ROM name: {}", rom_name);
     println!("Core Library name: {}", library_name);
     return EmulatorState {
-        rom_name: rom_name.to_string(), core_name: library_name.to_string(), frame_buffer: None
+        rom_name: rom_name.to_string(), core_name: library_name.to_string(), frame_buffer: None, bytes_per_pixel: 4, pixel_format: PixelFormat::ARGB8888
     }
     
 }
@@ -260,12 +309,10 @@ fn main() {
         match &CURRENT_EMULATOR_STATE.frame_buffer {
             Some(buffer) => {
                 // Do something with buffer
-                let slice_u32: &[u32] = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len() / 4)
-                }; // convert to &[u32] slice reference
+                let slice_u32: &[u32] =  std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len() / 4); // convert to &[u32] slice reference
                 // Temporary hack jhust to display SOMETHING on the screen
                 let mut vec: Vec<u32> = slice_u32.to_vec();
-                vec.resize( 1228800, 0);
+                vec.resize( WIDTH*HEIGHT*4, 0xFF);
                 window.update_with_buffer(&vec, WIDTH, HEIGHT).unwrap();
             }
             None => {
