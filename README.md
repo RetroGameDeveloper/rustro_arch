@@ -1312,4 +1312,87 @@ rand = "0.8.4"
 
 Success we now get past the main menu and since it is constantly pressing the start button on and off it will this constantly keep pausing and unpausing the game:
 
-![ConstatnlyPressing Start]()
+![Constantly Pressing Start Button Start](./screenshots/ConstantlyPressingStart.jpeg)
+
+Ok now we know the callback works lets properly handle the input, for this we need to get the list of `minifb` buttons that are currently pressed down, there is a nice example of this in their documentation:
+
+```rust
+window.get_keys_pressed(KeyRepeat::No).iter().for_each(|key|
+        match key {
+            Key::W => println!("pressed w"),
+            Key::T => println!("pressed t"),
+            _ => (),
+        }
+    );
+```
+
+However we need to pass this information so the we can access it in our callback function, we can do this using the global variable we created and just constantly update the variable every frame like so:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u32>>,
+    pixel_format: PixelFormat,
+    bytes_per_pixel: u8, // its only either 2 or 4 bytes per pixel in libretro
+    screen_pitch: u32,
+    screen_width: u32,
+    screen_height: u32,
+    buttons_pressed: Option<Vec<i16>>
+}
+
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+    pixel_format: PixelFormat::ARGB8888,
+    bytes_per_pixel: 4,
+    screen_pitch: 0,
+    screen_width: 0,
+    screen_height: 0,
+    buttons_pressed: None
+};
+```
+
+I made it optional to save creating a blank i16 array for the default state, I used the type i16 since that is what the call back function returns but it is really just a boolean in our cases (presumably it is an i16 for input such as game controller analog sticks).
+
+Since the callback function is called multiple times a frame, the most efficient way to implement this is to convert the `minifb` input to the libretro format in the main game loop (once per frame) and save it in our global state variable, rather than saving the `minifb` input state and converting it every time the callback function is called (multiple times per frame). 
+
+So lets do that in the main loop like so:
+
+```rust
+        let mut this_frames_pressed_buttons = vec![0; 16];
+  
+        let mini_fb_keys = window.get_keys_pressed(KeyRepeat::No).unwrap();
+        for key in mini_fb_keys {
+  
+            match key {
+                Key::Enter => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_START as usize] = 1;},
+                Key::Right => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_RIGHT as usize] = 1;},
+                Key::Left => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_LEFT as usize] = 1;},
+                Key::Up => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_UP as usize] = 1;},
+                Key::Down => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize] = 1;},
+                Key::A => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_A as usize] = 1;},
+                Key::S => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_B as usize] = 1;},
+                _ => {println!("Unhandled Key Pressed: {:?}", key);}
+            }
+        }
+  
+        unsafe {
+            CURRENT_EMULATOR_STATE.buttons_pressed = Some(this_frames_pressed_buttons);
+```
+
+
+Finally we can handle this in the callback function like so:
+
+```rust
+unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+    // println!("libretro_set_input_state_callback port: {} device: {} index: {} id: {}", port, device, index, id);
+    let is_pressed = match &CURRENT_EMULATOR_STATE.buttons_pressed {
+        Some(buttons_pressed) => buttons_pressed[id as usize],
+        None => 0
+    };
+
+    return is_pressed;
+}
+```

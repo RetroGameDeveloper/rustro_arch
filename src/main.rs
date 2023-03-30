@@ -2,9 +2,8 @@ extern crate libloading;
 extern crate libc;
 use clap::{App, Arg};
 
-use rand::Rng;
-use libretro_sys::{CoreAPI, GameInfo, PixelFormat, DEVICE_ID_JOYPAD_START, DEVICE_ID_JOYPAD_A};
-use minifb::{Key, Window, WindowOptions};
+use libretro_sys::{CoreAPI, GameInfo, PixelFormat};
+use minifb::{Key, Window, WindowOptions, KeyRepeat};
 use std::time::{Duration, Instant};
 use libloading::{Library};
 use std::ffi::{c_void, CString};
@@ -21,6 +20,7 @@ struct EmulatorState {
     screen_pitch: u32,
     screen_width: u32,
     screen_height: u32,
+    buttons_pressed: Option<Vec<i16>>
 }
 
 static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
@@ -31,7 +31,8 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     bytes_per_pixel: 4,
     screen_pitch: 0,
     screen_width: 0,
-    screen_height: 0
+    screen_height: 0,
+    buttons_pressed: None
 };
 
 fn convert_pixel_array_from_rgb565_to_xrgb8888(color_array: &[u8]) -> Box<[u32]> {
@@ -90,14 +91,13 @@ unsafe extern "C" fn libretro_set_input_poll_callback() {
 }
 
 unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
-    println!("libretro_set_input_state_callback port: {} device: {} index: {} id: {}", port, device, index, id);
-    let mut rng = rand::thread_rng();
-    let random_number: u8 = rng.gen_range(0..2);
+    // println!("libretro_set_input_state_callback port: {} device: {} index: {} id: {}", port, device, index, id);
+    let is_pressed = match &CURRENT_EMULATOR_STATE.buttons_pressed {
+        Some(buttons_pressed) => buttons_pressed[id as usize],
+        None => 0
+    };
 
-    return match id {
-        libretro_sys::DEVICE_ID_JOYPAD_START => random_number.into(),
-        _ => 0 // We don't know this key so mark it as not pressed
-    }
+    return is_pressed;
 }
 
 unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
@@ -236,7 +236,7 @@ fn parse_command_line_arguments() -> EmulatorState {
     println!("Core Library name: {}", library_name);
     return EmulatorState {
         rom_name: rom_name.to_string(), core_name: library_name.to_string(), frame_buffer: None, bytes_per_pixel: 4, 
-        pixel_format: PixelFormat::ARGB8888, screen_height: 0, screen_pitch:0, screen_width:0
+        pixel_format: PixelFormat::ARGB8888, screen_height: 0, screen_pitch:0, screen_width:0, buttons_pressed: Some(vec![0; 16])
     }
     
 }
@@ -317,8 +317,27 @@ fn main() {
         if window.is_key_down(Key::Down) {
             y += 1;
         }
-
+        let mut this_frames_pressed_buttons = vec![0; 16];
+        
+        let mini_fb_keys = window.get_keys_pressed(KeyRepeat::No).unwrap();
+        for key in mini_fb_keys {
+            
+            match key {
+                Key::Enter => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_START as usize] = 1;},
+                Key::Space => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_SELECT as usize] = 1;},
+                Key::Right => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_RIGHT as usize] = 1;},
+                Key::Left => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_LEFT as usize] = 1;},
+                Key::Up => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_UP as usize] = 1;},
+                Key::Down => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize] = 1;},
+                Key::A => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_A as usize] = 1;},
+                Key::S => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_B as usize] = 1;},
+                _ => {println!("Unhandled Key Pressed: {:?}", key);}
+            }
+        }
+                    
         unsafe {
+            CURRENT_EMULATOR_STATE.buttons_pressed = Some(this_frames_pressed_buttons);
+            
             match &CURRENT_EMULATOR_STATE.frame_buffer {
                 Some(buffer) => {
                     let width = (CURRENT_EMULATOR_STATE.screen_pitch / CURRENT_EMULATOR_STATE.bytes_per_pixel as u32) as usize;
