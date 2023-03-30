@@ -9,8 +9,6 @@ use libloading::{Library};
 use std::ffi::{c_void, CString};
 use std::{ptr, fs};
 
-const WIDTH: usize = 256;
-const HEIGHT: usize = 140;
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
 struct EmulatorState {
@@ -18,7 +16,10 @@ struct EmulatorState {
     core_name: String,
     frame_buffer: Option<Vec<u32>>,
     pixel_format: PixelFormat,
-    bytes_per_pixel: u8 // its only either 2 or 4 bytes per pixel in libretro
+    bytes_per_pixel: u8, // its only either 2 or 4 bytes per pixel in libretro
+    screen_pitch: u32,
+    screen_width: u32,
+    screen_height: u32,
 }
 
 static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
@@ -26,7 +27,10 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     core_name: String::new(),
     frame_buffer: None,
     pixel_format: PixelFormat::ARGB8888,
-    bytes_per_pixel: 4
+    bytes_per_pixel: 4,
+    screen_pitch: 0,
+    screen_width: 0,
+    screen_height: 0
 };
 
 fn convert_pixel_array_from_rgb565_to_xrgb8888(color_array: &[u8]) -> Box<[u32]> {
@@ -75,6 +79,9 @@ unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *con
 
     // Wrap the Vec<u8> in an Some Option and assign it to the frame_buffer field
     CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
+    CURRENT_EMULATOR_STATE.screen_height = height;
+    CURRENT_EMULATOR_STATE.screen_width = width;
+    CURRENT_EMULATOR_STATE.screen_pitch = pitch as u32;
 }
 
 unsafe extern "C" fn libretro_set_input_poll_callback() {
@@ -221,7 +228,8 @@ fn parse_command_line_arguments() -> EmulatorState {
     println!("ROM name: {}", rom_name);
     println!("Core Library name: {}", library_name);
     return EmulatorState {
-        rom_name: rom_name.to_string(), core_name: library_name.to_string(), frame_buffer: None, bytes_per_pixel: 4, pixel_format: PixelFormat::ARGB8888
+        rom_name: rom_name.to_string(), core_name: library_name.to_string(), frame_buffer: None, bytes_per_pixel: 4, 
+        pixel_format: PixelFormat::ARGB8888, screen_height: 0, screen_pitch:0, screen_width:0
     }
     
 }
@@ -245,12 +253,12 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
 }
 
 fn main() {
-    let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
+    // let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
     unsafe { CURRENT_EMULATOR_STATE = parse_command_line_arguments() };
     let mut window = Window::new(
         "RustroArch",
-        WIDTH,
-        HEIGHT,
+        640,
+        480,
         WindowOptions::default(),
     ).unwrap_or_else(|e| {
         panic!("{}", e);
@@ -279,9 +287,6 @@ fn main() {
             (core_api.retro_run)();
         }
 
-        // Clear the previous pixel to black
-        buffer[y * WIDTH + x] = 0x00000000;
-
         // Calculate fps
         fps_counter += 1;
         let elapsed = fps_timer.elapsed();
@@ -296,37 +301,35 @@ fn main() {
         if window.is_key_down(Key::Left) && x > 0 {
             x -= 1;
         }
-        if window.is_key_down(Key::Right) && x < WIDTH - 1 {
+        if window.is_key_down(Key::Right) {
             x += 1;
         }
         if window.is_key_down(Key::Up) && y > 0 {
             y -= 1;
         }
-        if window.is_key_down(Key::Down) && y < HEIGHT - 1 {
+        if window.is_key_down(Key::Down) {
             y += 1;
         }
 
-        // Set the current pixel to blue
-        buffer[y * WIDTH + x] = 0x0000FFFF;
-
-    unsafe {
-        match &CURRENT_EMULATOR_STATE.frame_buffer {
-            Some(buffer) => {
-                // Do something with buffer
-                let slice_u32: &[u32] =  std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len()); // convert to &[u32] slice reference
-                // Temporary hack jhust to display SOMETHING on the screen
-                let mut vec: Vec<u32> = slice_u32.to_vec();
-                vec.resize( WIDTH*HEIGHT*4, 0x0000FFFF);
-                window.update_with_buffer(&vec, WIDTH, HEIGHT).unwrap();
-            }
-            None => {
-                // Handle the case where frame_buffer is None
-                println!("We don't have a buffer to display");
+        unsafe {
+            match &CURRENT_EMULATOR_STATE.frame_buffer {
+                Some(buffer) => {
+                    let width = (CURRENT_EMULATOR_STATE.screen_pitch / CURRENT_EMULATOR_STATE.bytes_per_pixel as u32) as usize;
+                    let height = CURRENT_EMULATOR_STATE.screen_height as usize;
+                    let slice_of_pixel_buffer: &[u32] =  std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len()); // convert to &[u32] slice reference
+                    if slice_of_pixel_buffer.len() < width*height*4 {
+                        // The frame buffer isn't big enough so lets add additional pixels just so we can display it
+                        let mut vec: Vec<u32> = slice_of_pixel_buffer.to_vec();
+                        vec.resize( (width*height*4) as usize, 0x0000FFFF); // Add any missing pixels with colour blue
+                        window.update_with_buffer(&vec, width, height).unwrap();
+                    } else {
+                        window.update_with_buffer(&slice_of_pixel_buffer, width, height).unwrap();
+                    }
+                }
+                None => {
+                    println!("We don't have a buffer to display");
+                }
             }
         }
-    }
-
-        // Update the window buffer and display the changes
-        // window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
     }
 }

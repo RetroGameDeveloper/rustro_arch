@@ -1162,4 +1162,69 @@ Which will result in Tetris looking much nicer:
 
 ![Tetris Running](./screenshots/TetrisRunning.jpeg "Tetris Running")
 
-The height is set to the height of the Gamr Boy screen, but the width is actually set to the `pitch` divded by 2, as the pitch value that comes back is actually the number of bytes for each row of pixels (not the number of actual pixels).
+The 140 height is set to the height of the Game Boy screen, but the width is actually set to the `pitch` divded by 2, as the pitch value that comes back is actually the number of bytes for each row of pixels (not the number of actual pixels).
+
+The `WIDTH` and `HEIGHT` variables are hard-coded and will only work for this Game Boy core as the 140 pixels in height would not be applicable for other cores like NES or SNES. Lets move these variables to our global variable so we can adapt them, based on the values the cores give us:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u32>>,
+    pixel_format: PixelFormat,
+    bytes_per_pixel: u8, // its only either 2 or 4 bytes per pixel in libretro
+    screen_pitch: u32,
+    screen_width: u32,
+    screen_height: u32,
+}
+
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+    pixel_format: PixelFormat::ARGB8888,
+    bytes_per_pixel: 4,
+    screen_pitch: 0,
+    screen_width: 0,
+    screen_height: 0
+};
+```
+
+Now lets set the values after we set the frame buffer:
+
+```rust
+CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
+CURRENT_EMULATOR_STATE.screen_height = height;
+CURRENT_EMULATOR_STATE.screen_width = width;
+CURRENT_EMULATOR_STATE.screen_pitch = pitch as u32;
+```
+
+Finally lets use the new global variables when updating the `minifb` frame buffer:
+
+```rust
+unsafe {
+            match &CURRENT_EMULATOR_STATE.frame_buffer {
+                Some(buffer) => {
+                    let width = (CURRENT_EMULATOR_STATE.screen_pitch / CURRENT_EMULATOR_STATE.bytes_per_pixel as u32) as usize;
+                    let height = CURRENT_EMULATOR_STATE.screen_height as usize;
+                    let slice_of_pixel_buffer: &[u32] =  std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len()); // convert to &[u32] slice reference
+                    if slice_of_pixel_buffer.len() < width*height*4 {
+                        // The frame buffer isn't big enough so lets add additional pixels just so we can display it
+                        let mut vec: Vec<u32> = slice_of_pixel_buffer.to_vec();
+                        vec.resize( (width*height*4) as usize, 0x0000FFFF); // Add any missing pixels with colour blue
+                        window.update_with_buffer(&vec, width, height).unwrap();
+                    } else {
+                        window.update_with_buffer(&slice_of_pixel_buffer, width, height).unwrap();
+                    }
+                }
+                None => {
+                    println!("We don't have a buffer to display");
+                }
+            }
+        }
+```
+
+
+# Step 18 - Input Handling
+
+The ROM will load, get the the main menu and then if you wait long enough it will show a brief demo of the gameplay before going back to the menu and repeating. This is cool but it would be better if we could actually **play** the game. We already have logic that checks the state of the arrow keys for when we had the blue pixel moving on screen so lets see if we can pass that information to the core and start moving Tetris pieces in the game.
