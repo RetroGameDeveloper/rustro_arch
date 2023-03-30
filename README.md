@@ -1396,3 +1396,67 @@ unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, devic
     return is_pressed;
 }
 ```
+
+Now run the program and we can play the full game of Tetris!
+
+# Step 19 - Mapping the input buttons
+
+This is great but there are a few limitations, for one we only mapped the buttons for the Gameboy and this wouldn't work on cores that use more buttons and second it doesn't allow the users to configure which buttons do what.
+
+Since we are a aiming to be a lightweight drop-in-replacement for RetroArch lets find out if RetroArch has a common config format for this purpose so users will be able to use their existing configuration.
+
+
+Lets check to see if ChatGPT knows the answer, it gives us this response:
+
+>  RetroArch stores button mapping in a configuration file format called "RetroPad" or "RetroPad w/Analog". 
+>
+> RetroPad is a JSON-based configuration format used for mapping controllers, while RetroPad w/Analog is an extension of the format that supports analog sticks. 
+>
+> The configuration files are typically named "retroarch.cfg" and stored in the RetroArch configuration directory. The file can be edited manually or modified through the RetroArch interface.
+
+
+So first we need to get the location of the RetroArch configuration directory, which varies per Operating System, judging by the documentation this should work but it has only been tested on MacOSX so far:
+
+```rust
+fn get_retroarch_config_path() -> PathBuf {
+    return match std::env::consts::OS {
+        "windows" => PathBuf::from(env::var("APPDATA").ok().unwrap()).join("retroarch"),
+        "macos" => PathBuf::from(env::var("HOME").ok().unwrap()).join("Library/Application Support/RetroArch"),
+        _ => PathBuf::from(env::var("XDG_CONFIG_HOME").ok().unwrap()).join("retroarch"),
+    };
+}
+```
+
+
+Now that we can get the location of the file we just need code that can parse the format, which although according to ChatGPT was JSON-based, it is not (could be very loosly javascript based) as it is basically just a key and value on each line seperated by an equals symbol, such as:
+
+```rust
+input_player1_a = "x"
+input_player1_a_axis = "nul"
+input_player1_a_btn = "nul"
+input_player1_a_mbtn = "nul"
+input_player1_analog_dpad_mode = "0"
+input_player1_b = "z"
+```
+
+So we can write a simple function to parse this format into an easy to use HashMap like so:
+
+```rust
+fn parse_retroarch_config(config_file: &Path) -> Result<HashMap<String, String>, String> {
+    let file = File::open(config_file).map_err(|e| format!("Failed to open file: {}", e))?;
+    let reader = BufReader::new(file);
+    let mut config_map = HashMap::new();
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
+        if let Some((key, value)) = line.split_once("=") {
+            config_map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    Ok(config_map)
+}
+```
+
+
+# Step 20 - Saving and Loading state
+
+We are doing well but we still haven't implemented one of my favourite features of emulators, save states.

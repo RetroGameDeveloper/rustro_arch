@@ -4,10 +4,14 @@ use clap::{App, Arg};
 
 use libretro_sys::{CoreAPI, GameInfo, PixelFormat};
 use minifb::{Key, Window, WindowOptions, KeyRepeat};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, BufRead};
+use std::path::{PathBuf, Path};
 use std::time::{Duration, Instant};
 use libloading::{Library};
 use std::ffi::{c_void, CString};
-use std::{ptr, fs};
+use std::{ptr, fs, env};
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
@@ -34,6 +38,27 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     screen_height: 0,
     buttons_pressed: None
 };
+
+fn get_retroarch_config_path() -> PathBuf {
+    return match std::env::consts::OS {
+        "windows" => PathBuf::from(env::var("APPDATA").ok().unwrap()).join("retroarch"),
+        "macos" => PathBuf::from(env::var("HOME").ok().unwrap()).join("Library/Application Support/RetroArch"),
+        _ => PathBuf::from(env::var("XDG_CONFIG_HOME").ok().unwrap()).join("retroarch"),
+    };
+}
+
+fn parse_retroarch_config(config_file: &Path) -> Result<HashMap<String, String>, String> {
+    let file = File::open(config_file).map_err(|e| format!("Failed to open file: {}", e))?;
+    let reader = BufReader::new(file);
+    let mut config_map = HashMap::new();
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
+        if let Some((key, value)) = line.split_once("=") {
+            config_map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    Ok(config_map)
+}
 
 fn convert_pixel_array_from_rgb565_to_xrgb8888(color_array: &[u8]) -> Box<[u32]> {
     let bytes_per_pixel = 2;
@@ -215,6 +240,9 @@ unsafe fn load_core(library_path: &String) -> (CoreAPI) {
 
 
 fn parse_command_line_arguments() -> EmulatorState {
+    let retro_arch_config_path = get_retroarch_config_path();
+    let config = parse_retroarch_config(&retro_arch_config_path.join("config/retroarch.cfg"));
+    println!("retro_arch_config_path: {} config: {:?}", retro_arch_config_path.join("config/retroarch.cfg").display(), config);
     let matches = App::new("RustroArch")
         .arg(
             Arg::with_name("rom_name")
