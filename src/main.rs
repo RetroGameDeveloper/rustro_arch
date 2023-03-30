@@ -2,7 +2,8 @@ extern crate libloading;
 extern crate libc;
 use clap::{App, Arg};
 
-use libretro_sys::{CoreAPI, GameInfo, PixelFormat};
+use rand::Rng;
+use libretro_sys::{CoreAPI, GameInfo, PixelFormat, DEVICE_ID_JOYPAD_START, DEVICE_ID_JOYPAD_A};
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use libloading::{Library};
@@ -89,8 +90,14 @@ unsafe extern "C" fn libretro_set_input_poll_callback() {
 }
 
 unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
-    // println!("libretro_set_input_state_callback");
-    return 0; // Hard coded 0 for now means nothing is pressed
+    println!("libretro_set_input_state_callback port: {} device: {} index: {} id: {}", port, device, index, id);
+    let mut rng = rand::thread_rng();
+    let random_number: u8 = rng.gen_range(0..2);
+
+    return match id {
+        libretro_sys::DEVICE_ID_JOYPAD_START => random_number.into(),
+        _ => 0 // We don't know this key so mark it as not pressed
+    }
 }
 
 unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {

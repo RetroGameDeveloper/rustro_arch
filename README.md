@@ -1228,3 +1228,88 @@ unsafe {
 # Step 18 - Input Handling
 
 The ROM will load, get the the main menu and then if you wait long enough it will show a brief demo of the gameplay before going back to the menu and repeating. This is cool but it would be better if we could actually **play** the game. We already have logic that checks the state of the arrow keys for when we had the blue pixel moving on screen so lets see if we can pass that information to the core and start moving Tetris pieces in the game.
+
+First of all how does the core request from the frontend which buttons are pressed? It uses the input state callback which we created a dummy for previously, if we modify it slightly to print out the parameters that the core are passing in like so:
+
+```rust
+unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+    println!("libretro_set_input_state_callback port: {} device: {} index: {} id: {}", port, device, index, id);
+    return 0; // Hard coded 0 for now means nothing is pressed
+}
+```
+
+We see that Gambatte is constantly requesting the same port/device/index and only changing the id:
+
+```rust
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 9
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 1
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 8
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 0
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 2
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 3
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 7
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 6
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 4
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 5
+libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 9
+```
+
+
+Looking up the documentation the four parameters are:
+
+* port: the controller port number. Each controller is associated with a specific port number.
+* device: the device type. This specifies which type of input device the input state is being retrieved for, such as a gamepad, mouse, keyboard, etc.
+* index: the index of the input device. This parameter is used to distinguish between multiple input devices of the same type connected to the same port.
+* id: the input ID or button. This parameter is used to retrieve the current state of a specific button or input on the input device.
+
+We only care about 1 player games at the moment, so we just need to map what id values (0-9) should be maped to which keyboard keys, if we look up the `libretro-sys` library again we can see they have defined some nice constants for us:
+
+```rust
+pub const DEVICE_ID_JOYPAD_B: libc::c_uint = 0;
+pub const DEVICE_ID_JOYPAD_Y: libc::c_uint = 1;
+pub const DEVICE_ID_JOYPAD_SELECT: libc::c_uint = 2;
+pub const DEVICE_ID_JOYPAD_START: libc::c_uint = 3;
+pub const DEVICE_ID_JOYPAD_UP: libc::c_uint = 4;
+pub const DEVICE_ID_JOYPAD_DOWN: libc::c_uint = 5;
+pub const DEVICE_ID_JOYPAD_LEFT: libc::c_uint = 6;
+pub const DEVICE_ID_JOYPAD_RIGHT: libc::c_uint = 7;
+pub const DEVICE_ID_JOYPAD_A: libc::c_uint = 8;
+pub const DEVICE_ID_JOYPAD_X: libc::c_uint = 9;
+```
+
+First lets see if we can get past the main menu of Tetris by making the Start button always be pressed:
+
+```rust
+unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+    println!("libretro_set_input_state_callback port: {} device: {} index: {} id: {}", port, device, index, id);
+    return match id {
+        libretro_sys::DEVICE_ID_JOYPAD_START => 1,
+        _ => 0 // We don't know this key so mark it as not pressed
+    }
+}
+```
+
+This doesn't actually work, presumably because the core or ROM is looking for the start button to change state at some point rather than constantly being pressed down. We can hack a solution using a random number generator so it will randomly press the start button constantly:
+
+```rust
+unsafe extern "C" fn libretro_set_input_state_callback(port: libc::c_uint, device: libc::c_uint, index: libc::c_uint, id: libc::c_uint) -> i16 {
+    println!("libretro_set_input_state_callback port: {} device: {} index: {} id: {}", port, device, index, id);
+    let mut rng = rand::thread_rng();
+    let random_number: u8 = rng.gen_range(0..2);
+
+    return match id {
+        libretro_sys::DEVICE_ID_JOYPAD_START => random_number.into(),
+        _ => 0 // We don't know this key so mark it as not pressed
+    }
+}
+```
+
+Note for this to work you need to add the rand package to your Cargo file:
+
+```rust
+rand = "0.8.4"
+```
+
+Success we now get past the main menu and since it is constantly pressing the start button on and off it will this constantly keep pausing and unpausing the game:
+
+![ConstatnlyPressing Start]()
