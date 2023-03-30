@@ -858,7 +858,7 @@ unsafe {
             Some(buffer) => {
                 // Do something with buffer
                 let slice_u32: &[u32] = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len() / 4)
+                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len())
                 }; // convert to &[u32] slice reference
                 window.update_with_buffer(slice_u32, WIDTH, HEIGHT).unwrap();
             }
@@ -885,7 +885,7 @@ Update failed because input buffer is too small. Required size for 640 (640 stri
 We are only passing 23040 bytes because we multipiled the width and height together and presumed that each pixel was a single byte which is of course incorrect.
 
 
-But just to get something to display on the screen based on thsi frame buffer lets do a little hack and just fill up the rest of the buffer with the value 0 (black) like so:
+But just to get something to display on the screen based on this frame buffer lets do a little hack and just fill up the rest of the buffer with the value 0x0000FFFF (blue) like so:
 
 ```rust
 unsafe {
@@ -893,11 +893,11 @@ unsafe {
             Some(buffer) => {
                 // Do something with buffer
                 let slice_u32: &[u32] = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len() / 4)
+                    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len())
                 }; // convert to &[u32] slice reference
                 // Temporary hack jhust to display SOMETHING on the screen
                 let mut vec: Vec<u32> = slice_u32.to_vec();
-                vec.resize( 1228800, 0);
+                vec.resize( WIDTH*HEIGHT*4, 0x0000FFFF)
                 window.update_with_buffer(&vec, WIDTH, HEIGHT).unwrap();
             }
             None => {
@@ -1089,9 +1089,10 @@ libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
         },
 ```
 
+Now we need to be able to convert the RGB565 format to the format that `minifb` expects so lets create a function that does just that:
 
 ```rust
-fn convert_pixel_array_from_RGB565_to_XRGB8888(color_array: &[u8]) -> Box<[u32]> {
+fn convert_pixel_array_from_rgb565_to_xrgb8888(color_array: &[u8]) -> Box<[u32]> {
     let bytes_per_pixel = 2;
     assert_eq!(color_array.len() % bytes_per_pixel, 0, "color_array length must be a multiple of 2 (16-bits per pixel)");
 
@@ -1099,20 +1100,66 @@ fn convert_pixel_array_from_RGB565_to_XRGB8888(color_array: &[u8]) -> Box<[u32]>
     let mut result = vec![0u32; num_pixels];
 
     for i in 0..num_pixels {
+        // This Rust code is decoding a 16-bit color value, represented by two bytes of data, into its corresponding red, green, and blue components.
         let first_byte = color_array[bytes_per_pixel*i];
         let second_byte = color_array[(bytes_per_pixel*i)+1];
+
+        // First extract the red component from the first byte. The first byte contains the most significant 8 bits of the 16-bit color value. The & operator performs a bitwise AND operation on first_byte and 0b1111_1000, which extracts the 5 most significant bits of the byte. The >> operator then shifts the extracted bits to the right by 3 positions, effectively dividing by 8, to get the value of the red component on a scale of 0-31.
         let red = (first_byte & 0b1111_1000) >> 3;
+        // Next extract the green component from both bytes. The first part of the expression ((first_byte & 0b0000_0111) << 3) extracts the 3 least significant bits of first_byte and shifts them to the left by 3 positions, effectively multiplying by 8. The second part of the expression ((second_byte & 0b1110_0000) >> 5) extracts the 3 most significant bits of second_byte and shifts them to the right by 5 positions, effectively dividing by 32. The two parts are then added together to get the value of the green component on a scale of 0-63.
         let green = ((first_byte & 0b0000_0111) << 3) + ((second_byte & 0b1110_0000) >> 5);
+        // Next extract the blue component from the second byte. The & operator performs a bitwise AND operation on second_byte and 0b0001_1111, which extracts the 5 least significant bits of the byte. This gives the value of the blue component on a scale of 0-31.
         let blue = second_byte & 0b0001_1111;
-    
-        // Use high bits for empty low bits
+
+        // Use high bits for empty low bits as we have more bits available in XRGB8888
         let red = (red << 3) | (red >> 2);
         let green = (green << 2) | (green >> 3);
         let blue = (blue << 3) | (blue >> 2);
 
+        // Finally save the pixel data in the result array as an XRGB8888 value
         result[i] = ((red as u32) << 16) | ((green as u32) << 8) | (blue as u32);
     }
 
     result.into_boxed_slice()
 }
 ```
+
+Now lets convert the buffer when it comes in from the emulator:
+
+```rust
+unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *const libc::c_void, width: libc::c_uint, height: libc::c_uint, pitch: libc::size_t) {
+    if (frame_buffer_data == ptr::null()) {
+        println!("frame_buffer_data was null");
+        return;
+    }
+    let length_of_frame_buffer = ((pitch as u32) * height) * CURRENT_EMULATOR_STATE.bytes_per_pixel as u32;
+    let buffer_slice = std::slice::from_raw_parts(frame_buffer_data as *const u8, length_of_frame_buffer as usize);
+    let result = convert_pixel_array_from_rgb565_to_xrgb8888(buffer_slice);
+
+    // Create a Vec<u8> from the slice
+    let buffer_vec = Vec::from(result);
+
+    // Wrap the Vec<u8> in an Some Option and assign it to the frame_buffer field
+    CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
+}
+```
+
+If you run the program now you will get something that looks like this:
+
+![Making progress](./screenshots/IncorrectDimensions.jpeg)
+
+
+# Step 17 - Fixing display issues
+
+Remember the `pitch` parameter that the core sends us? Yeah turns out it is very important as it is basically the width of the frame buffer, with `width` parameter is the part of the pitch that is actually used for the gameboy screen and the rest of the pixels are black. So we can actually make this a lot better by just changing the WIDTH and HEIGHT to the following values:
+
+```rust
+const WIDTH: usize = 256;
+const HEIGHT: usize = 140;
+```
+
+Which will result in Tetris looking much nicer:
+
+![Tetris Running](./screenshots/TetrisRunning.jpeg "Tetris Running")
+
+The height is set to the height of the Gamr Boy screen, but the width is actually set to the `pitch` divded by 2, as the pitch value that comes back is actually the number of bytes for each row of pixels (not the number of actual pixels).
