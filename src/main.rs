@@ -54,7 +54,7 @@ fn parse_retroarch_config(config_file: &Path) -> Result<HashMap<String, String>,
     for line in reader.lines() {
         let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
         if let Some((key, value)) = line.split_once("=") {
-            config_map.insert(key.trim().to_string(), value.trim().to_string());
+            config_map.insert(key.trim().to_string(), value.trim().replace("\"", "").to_string());
         }
     }
     Ok(config_map)
@@ -238,11 +238,14 @@ unsafe fn load_core(library_path: &String) -> (CoreAPI) {
     }
 }
 
-
-fn parse_command_line_arguments() -> EmulatorState {
+fn setup_config() -> Result<HashMap<String, String>, String> {
     let retro_arch_config_path = get_retroarch_config_path();
     let config = parse_retroarch_config(&retro_arch_config_path.join("config/retroarch.cfg"));
     println!("retro_arch_config_path: {} config: {:?}", retro_arch_config_path.join("config/retroarch.cfg").display(), config);
+    config
+}
+
+fn parse_command_line_arguments() -> EmulatorState {
     let matches = App::new("RustroArch")
         .arg(
             Arg::with_name("rom_name")
@@ -288,8 +291,25 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
 }
 
 fn main() {
-    // let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
     unsafe { CURRENT_EMULATOR_STATE = parse_command_line_arguments() };
+    let config = setup_config().unwrap();
+
+    let key_device_map = HashMap::from([
+        (&config["input_player1_a"], libretro_sys::DEVICE_ID_JOYPAD_A as usize),
+        (&config["input_player1_b"], libretro_sys::DEVICE_ID_JOYPAD_B as usize),
+        (&config["input_player1_x"], libretro_sys::DEVICE_ID_JOYPAD_X as usize),
+        (&config["input_player1_y"], libretro_sys::DEVICE_ID_JOYPAD_Y as usize),
+        (&config["input_player1_l"], libretro_sys::DEVICE_ID_JOYPAD_L as usize),
+        (&config["input_player1_r"], libretro_sys::DEVICE_ID_JOYPAD_R as usize),
+        (&config["input_player1_down"], libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize),
+        (&config["input_player1_up"], libretro_sys::DEVICE_ID_JOYPAD_UP as usize),
+        (&config["input_player1_right"], libretro_sys::DEVICE_ID_JOYPAD_RIGHT as usize),
+        (&config["input_player1_left"], libretro_sys::DEVICE_ID_JOYPAD_LEFT as usize),
+        (&config["input_player1_start"], libretro_sys::DEVICE_ID_JOYPAD_START as usize),
+        (&config["input_player1_select"], libretro_sys::DEVICE_ID_JOYPAD_SELECT as usize),
+    ]);
+    
+    
     let mut window = Window::new(
         "RustroArch",
         640,
@@ -298,9 +318,6 @@ fn main() {
     ).unwrap_or_else(|e| {
         panic!("{}", e);
     });
-    
-    let mut x: usize = 0;
-    let mut y: usize = 0;
     
     let mut fps_timer = Instant::now();
     let mut fps_counter = 0;
@@ -332,34 +349,17 @@ fn main() {
             fps_timer = Instant::now();
         }
 
-        // Move the pixel when the arrow keys are pressed
-        if window.is_key_down(Key::Left) && x > 0 {
-            x -= 1;
-        }
-        if window.is_key_down(Key::Right) {
-            x += 1;
-        }
-        if window.is_key_down(Key::Up) && y > 0 {
-            y -= 1;
-        }
-        if window.is_key_down(Key::Down) {
-            y += 1;
-        }
         let mut this_frames_pressed_buttons = vec![0; 16];
         
-        let mini_fb_keys = window.get_keys_pressed(KeyRepeat::No).unwrap();
+        let mini_fb_keys = window.get_keys_pressed(KeyRepeat::Yes).unwrap();
+
         for key in mini_fb_keys {
-            
-            match key {
-                Key::Enter => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_START as usize] = 1;},
-                Key::Space => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_SELECT as usize] = 1;},
-                Key::Right => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_RIGHT as usize] = 1;},
-                Key::Left => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_LEFT as usize] = 1;},
-                Key::Up => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_UP as usize] = 1;},
-                Key::Down => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize] = 1;},
-                Key::A => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_A as usize] = 1;},
-                Key::S => {this_frames_pressed_buttons[libretro_sys::DEVICE_ID_JOYPAD_B as usize] = 1;},
-                _ => {println!("Unhandled Key Pressed: {:?}", key);}
+            let key_as_string = format!("{:?}", key).to_ascii_lowercase();
+
+            if let Some(libretro_button_id) = key_device_map.get(&key_as_string) {
+                this_frames_pressed_buttons[*libretro_button_id] = 1;
+            } else {
+                println!("Unhandled Key Pressed: {} ", key_as_string);
             }
         }
                     

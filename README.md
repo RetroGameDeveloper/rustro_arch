@@ -724,7 +724,7 @@ libretro_set_input_state_callback
 
 Now that we have the core running it would be nice to actually see what the emulator is doing, for that we need to get the pixel buffer and display it instead of our moving blue pixel.
 
-To get the pixel buffer from the libretro core we need to properly implement the `libretro_set_video_refresh_callback` we just created a dummy for as it is called every frame when the core has finished writing all the pixels to the frame buffer. 
+To get the pixel buffer from the libretro core we need to properly implement the `libretro_set_video_refresh_callback` we just created a dummy for as it is called every frame when the core has finished writing all the pixels to the frame buffer.
 
 The width and height parameter will be useful as it is the size of the frame in pixels, but I need to find out what the pitch variable is used for. You can print out the values every frame like so:
 
@@ -742,7 +742,7 @@ libretro_set_video_refresh_callback, width: 160, height: 144, pitch: 512
 
 So the width and height look correct but lets quickly find out what pitch is and why it is set to 512, I decided to do the mordern thing ans asked ChatGPT, we got the following response:
 
->  In the context of libretro, pitch refers to the number of bytes between two vertically adjacent pixels in an image. It is also sometimes called the "stride" or "line stride".
+> In the context of libretro, pitch refers to the number of bytes between two vertically adjacent pixels in an image. It is also sometimes called the "stride" or "line stride".
 >
 > The pitch value is important because many image processing algorithms and hardware acceleration APIs require that images be stored in memory in a specific format with a specific pitch value. If an image's pitch value does not match the expected value, it can cause visual artifacts or errors in processing.
 
@@ -777,7 +777,6 @@ unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *con
 ```
 
 This fixes the segmentation fault and highlights a piece of useful information, that the frame_buffer_data is sometimes null, this could be related to the dupe frames mentioned earlier, maybe if it is null it expects the frontend to just display the previous frame?
-
 
 # Step 14 - Displaying the Pixel Buffer to the screen
 
@@ -819,7 +818,6 @@ unsafe { CURRENT_EMULATOR_STATE = parse_command_line_arguments() };
 
 Note that the unsafe block is required as we are modifying global state, which is not thread safe, exactly why we shouldn't be using a global variable, maybe we could put the libRetro callback as a closure inside the main function along with the variable, but that wouldn't work as the callback needs to be marked as `extern` for the core to call it, anyway lets see if we can get the pixel buffer from the callback first.
 
-
 Lets set the frame_buffer on our global variable:
 
 ```rust
@@ -842,7 +840,6 @@ unsafe extern "C" fn libretro_set_video_refresh_callback(frame_buffer_data: *con
 ```
 
 Excellent so the frame_buffer has been successfully set on the global variable we should be able to access it from the main game loop!
-
 
 So lets replace the old code that we were using to display the moving blue pixel example, from this:
 
@@ -884,7 +881,6 @@ Update failed because input buffer is too small. Required size for 640 (640 stri
 
 We are only passing 23040 bytes because we multipiled the width and height together and presumed that each pixel was a single byte which is of course incorrect.
 
-
 But just to get something to display on the screen based on this frame buffer lets do a little hack and just fill up the rest of the buffer with the value 0x0000FFFF (blue) like so:
 
 ```rust
@@ -907,8 +903,6 @@ unsafe {
         }
     }
 ```
-
-
 
 # Step 15 - Handling the core Pixel Format
 
@@ -946,10 +940,9 @@ This is where the core tells us the format it will write the Pixel buffer in, di
 * RETRO_PIXEL_FORMAT_UNKNOWN
   * No idea how to handle this apart from just displaying and error and exiting
 
-
 So which format does our `minifb` library use to display its buffer? Well a quick look at the [documentation](https://docs.rs/minifb/0.24.0/minifb/struct.Window.html#method.update_with_buffer) comes up with this statement:
 
->  Updates the window with a 32-bit pixel buffer. The encoding for each pixel is 0RGB: The upper 8-bits are ignored, the next 8-bits are for the red channel, the next 8-bits afterwards for the green channel, and the lower 8-bits for the blue channel.
+> Updates the window with a 32-bit pixel buffer. The encoding for each pixel is 0RGB: The upper 8-bits are ignored, the next 8-bits are for the red channel, the next 8-bits afterwards for the green channel, and the lower 8-bits for the blue channel.
 
 Which is the same as `RETRO_PIXEL_FORMAT_XRGB8888`, so the good news is that cores that give us the pixel buffer in this format will be slightly more efficient as we won't need to convert it to this format every frame!
 
@@ -985,7 +978,7 @@ libretro_sys::ENVIRONMENT_SET_PIXEL_FORMAT => {
         },
 ```
 
-Now when we run this code with the Gambatte core it prints out: 
+Now when we run this code with the Gambatte core it prints out:
 
 ```rust
 Core will send us pixel data in the RGB565 format
@@ -1013,10 +1006,9 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
 
 I set the default value to the 32 byte version as `minifb` uses that but it should always be overridden by the core anyway.
 
-
 # Step 16 - Converting one Pixel Format to another
 
-Now that we have saved the pixel format into the global variable we can use it to convert the buffer from the core's pixel format into the `minifb` pixel format. 
+Now that we have saved the pixel format into the global variable we can use it to convert the buffer from the core's pixel format into the `minifb` pixel format.
 
 So lets have a look at the video refresh callback function again:
 
@@ -1148,7 +1140,6 @@ If you run the program now you will get something that looks like this:
 
 ![Making progress](./screenshots/IncorrectDimensions.jpeg)
 
-
 # Step 17 - Fixing display issues
 
 Remember the `pitch` parameter that the core sends us? Yeah turns out it is very important as it is basically the width of the frame buffer, with `width` parameter is the part of the pitch that is actually used for the gameboy screen and the rest of the pixels are black. So we can actually make this a lot better by just changing the WIDTH and HEIGHT to the following values:
@@ -1224,7 +1215,6 @@ unsafe {
         }
 ```
 
-
 # Step 18 - Input Handling
 
 The ROM will load, get the the main menu and then if you wait long enough it will show a brief demo of the gameplay before going back to the menu and repeating. This is cool but it would be better if we could actually **play** the game. We already have logic that checks the state of the arrow keys for when we had the blue pixel moving on screen so lets see if we can pass that information to the core and start moving Tetris pieces in the game.
@@ -1253,7 +1243,6 @@ libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 4
 libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 5
 libretro_set_input_state_callback port: 0 device: 1 index: 0 id: 9
 ```
-
 
 Looking up the documentation the four parameters are:
 
@@ -1356,7 +1345,7 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
 
 I made it optional to save creating a blank i16 array for the default state, I used the type i16 since that is what the call back function returns but it is really just a boolean in our cases (presumably it is an i16 for input such as game controller analog sticks).
 
-Since the callback function is called multiple times a frame, the most efficient way to implement this is to convert the `minifb` input to the libretro format in the main game loop (once per frame) and save it in our global state variable, rather than saving the `minifb` input state and converting it every time the callback function is called (multiple times per frame). 
+Since the callback function is called multiple times a frame, the most efficient way to implement this is to convert the `minifb` input to the libretro format in the main game loop (once per frame) and save it in our global state variable, rather than saving the `minifb` input state and converting it every time the callback function is called (multiple times per frame).
 
 So lets do that in the main loop like so:
 
@@ -1382,7 +1371,6 @@ So lets do that in the main loop like so:
             CURRENT_EMULATOR_STATE.buttons_pressed = Some(this_frames_pressed_buttons);
 ```
 
-
 Finally we can handle this in the callback function like so:
 
 ```rust
@@ -1405,15 +1393,13 @@ This is great but there are a few limitations, for one we only mapped the button
 
 Since we are a aiming to be a lightweight drop-in-replacement for RetroArch lets find out if RetroArch has a common config format for this purpose so users will be able to use their existing configuration.
 
-
 Lets check to see if ChatGPT knows the answer, it gives us this response:
 
->  RetroArch stores button mapping in a configuration file format called "RetroPad" or "RetroPad w/Analog". 
+> RetroArch stores button mapping in a configuration file format called "RetroPad" or "RetroPad w/Analog".
 >
-> RetroPad is a JSON-based configuration format used for mapping controllers, while RetroPad w/Analog is an extension of the format that supports analog sticks. 
+> RetroPad is a JSON-based configuration format used for mapping controllers, while RetroPad w/Analog is an extension of the format that supports analog sticks.
 >
 > The configuration files are typically named "retroarch.cfg" and stored in the RetroArch configuration directory. The file can be edited manually or modified through the RetroArch interface.
-
 
 So first we need to get the location of the RetroArch configuration directory, which varies per Operating System, judging by the documentation this should work but it has only been tested on MacOSX so far:
 
@@ -1426,7 +1412,6 @@ fn get_retroarch_config_path() -> PathBuf {
     };
 }
 ```
-
 
 Now that we can get the location of the file we just need code that can parse the format, which although according to ChatGPT was JSON-based, it is not (could be very loosly javascript based) as it is basically just a key and value on each line seperated by an equals symbol, such as:
 
@@ -1449,12 +1434,75 @@ fn parse_retroarch_config(config_file: &Path) -> Result<HashMap<String, String>,
     for line in reader.lines() {
         let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
         if let Some((key, value)) = line.split_once("=") {
-            config_map.insert(key.trim().to_string(), value.trim().to_string());
+            config_map.insert(key.trim().to_string(), value.trim().replace("\"", "").to_string());
         }
     }
     Ok(config_map)
 }
 ```
+
+Now lets use these new functions so that we can get the key mappings, lets create a new function that returns the config:
+
+```rust
+fn setup_config() -> Result<HashMap<String, String>, String> {
+    let retro_arch_config_path = get_retroarch_config_path();
+    let config = parse_retroarch_config(&retro_arch_config_path.join("config/retroarch.cfg"));
+    println!("retro_arch_config_path: {} config: {:?}", retro_arch_config_path.join("config/retroarch.cfg").display(), config);
+    config
+}
+```
+
+I created this as a seperate function to the `parse_retroarch_config` as we will want to add support for users to use our own config file if they don't want to use the same settings as they use for their RetroArch.
+
+We can then call this function like so:
+
+```rust
+let config = setup_config().unwrap();
+println!("Key for Player 1 A button: {}", config["input_player1_a"]);
+```
+
+This is great but the problem with this is the result is a string of the keyboard letter pressed and we need to map it to the correct `minifb` Key enum type in order to use it.
+
+
+```rust
+let config = setup_config().unwrap();
+
+let key_device_map = HashMap::from([
+        (&config["input_player1_a"], libretro_sys::DEVICE_ID_JOYPAD_A as usize),
+        (&config["input_player1_b"], libretro_sys::DEVICE_ID_JOYPAD_B as usize),
+        (&config["input_player1_x"], libretro_sys::DEVICE_ID_JOYPAD_X as usize),
+        (&config["input_player1_y"], libretro_sys::DEVICE_ID_JOYPAD_Y as usize),
+        (&config["input_player1_l"], libretro_sys::DEVICE_ID_JOYPAD_L as usize),
+        (&config["input_player1_r"], libretro_sys::DEVICE_ID_JOYPAD_R as usize),
+        (&config["input_player1_down"], libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize),
+        (&config["input_player1_up"], libretro_sys::DEVICE_ID_JOYPAD_UP as usize),
+        (&config["input_player1_right"], libretro_sys::DEVICE_ID_JOYPAD_RIGHT as usize),
+        (&config["input_player1_left"], libretro_sys::DEVICE_ID_JOYPAD_LEFT as usize),
+        (&config["input_player1_start"], libretro_sys::DEVICE_ID_JOYPAD_START as usize),
+        (&config["input_player1_select"], libretro_sys::DEVICE_ID_JOYPAD_SELECT as usize),
+ ]);
+```
+
+
+Now we can rewrite our input handling logic to look like this:
+
+```rust
+        let mut this_frames_pressed_buttons = vec![0; 16];
+  
+        let mini_fb_keys = window.get_keys_pressed(KeyRepeat::Yes).unwrap();
+
+        for key in mini_fb_keys {
+            let key_as_string = format!("{:?}", key).to_ascii_lowercase();
+
+            if let Some(device_id) = key_device_map.get(&key_as_string) {
+                this_frames_pressed_buttons[*device_id] = 1;
+            } else {
+                println!("Unhandled Key Pressed: {} input_player1_a: {}", key_as_string, config["input_player1_a"]);
+            }
+        }
+   
+```
+
 
 
 # Step 20 - Saving and Loading state
