@@ -240,9 +240,39 @@ unsafe fn load_core(library_path: &String) -> (CoreAPI) {
 
 fn setup_config() -> Result<HashMap<String, String>, String> {
     let retro_arch_config_path = get_retroarch_config_path();
-    let config = parse_retroarch_config(&retro_arch_config_path.join("config/retroarch.cfg"));
-    println!("retro_arch_config_path: {} config: {:?}", retro_arch_config_path.join("config/retroarch.cfg").display(), config);
-    config
+    let our_config = parse_retroarch_config(Path::new("./rustroarch.cfg"));
+    let retro_arch_config = parse_retroarch_config(&retro_arch_config_path.join("config/retroarch.cfg"));
+    let mut merged_config: HashMap<String, String> = HashMap::from([
+        ("input_player1_a", "a"),
+        ("input_player1_b", "s"),
+        ("input_player1_x", "z"),
+        ("input_player1_y", "x"),
+        ("input_player1_l", "q"),
+        ("input_player1_r", "w"),
+        ("input_player1_down", "down"),
+        ("input_player1_up", "up"),
+        ("input_player1_left", "left"),
+        ("input_player1_right", "right"),
+        ("input_player1_select", "space"),
+        ("input_player1_start", "enter"),
+        ("input_reset", "h"),
+        ("input_save_state", "f2"),
+        ("input_load_state", "f4"),
+        ("input_screenshot", "f8"),
+        ("savestate_directory", "./states"),
+        ]).iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    match retro_arch_config {
+        Ok(config) => merged_config.extend(config),
+        _ => println!("We don't have RetroArch config")
+    }
+    match our_config {
+        Ok(config) => merged_config.extend(config),
+       _ => println!("We don't have RustroArch config",)
+    }
+    // println!("retro_arch_config_path: {} merged_config: {:?}", retro_arch_config_path.join("config/retroarch.cfg").display(), merged_config);
+    Ok(merged_config)
 }
 
 fn parse_command_line_arguments() -> EmulatorState {
@@ -353,6 +383,7 @@ fn main() {
         
         let mini_fb_keys = window.get_keys_pressed(KeyRepeat::Yes).unwrap();
 
+        // Input Handling for the keys pressed in minifb cargo
         for key in mini_fb_keys {
             let key_as_string = format!("{:?}", key).to_ascii_lowercase();
 
@@ -361,6 +392,7 @@ fn main() {
             } else {
                 println!("Unhandled Key Pressed: {} ", key_as_string);
             }
+            // TODO: handle input_save_state for save states
         }
                     
         unsafe {

@@ -1504,7 +1504,60 @@ Now we can rewrite our input handling logic to look like this:
 ```
 
 
+This is great but we shouldn't expect the user to have RetroArch installed and have a valid config, and we need to support the case where they might want different settings for out frontend compared to their RetroArch, so lets set up some default values and allow users to override them if they have a file called `rustroarch.cfg`.
+
+To do this we can refactor the `setup_config` function like so:
+
+```rust
+fn setup_config() -> Result<HashMap<String, String>, String> {
+    let retro_arch_config_path = get_retroarch_config_path();
+    let our_config = parse_retroarch_config(Path::new("./rustroarch.cfg"));
+    let retro_arch_config = parse_retroarch_config(&retro_arch_config_path.join("config/retroarch.cfg"));
+    let mut merged_config: HashMap<String, String> = HashMap::from([
+        ("input_player1_a", "a"),
+        ("input_player1_b", "s"),
+        ("input_player1_x", "z"),
+        ("input_player1_y", "x"),
+        ("input_player1_l", "q"),
+        ("input_player1_r", "w"),
+        ("input_player1_down", "down"),
+        ("input_player1_up", "up"),
+        ("input_player1_left", "left"),
+        ("input_player1_right", "right"),
+        ("input_player1_select", "space"),
+        ("input_player1_start", "enter"),
+        ("input_reset", "h"),
+        ("input_save_state", "f2"),
+        ("input_load_state", "f4"),
+        ("input_screenshot", "f8"),
+        ("savestate_directory", "./states"),
+        ]).iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    match retro_arch_config {
+        Ok(config) => merged_config.extend(config),
+        _ => println!("We don't have RetroArch config")
+    }
+    match our_config {
+        Ok(config) => merged_config.extend(config),
+       _ => println!("We don't have RustroArch config",)
+    }
+    // println!("retro_arch_config_path: {} merged_config: {:?}", retro_arch_config_path.join("config/retroarch.cfg").display(), merged_config);
+    Ok(merged_config)
+}
+```
+
+In this code first we setup some default config values, mainly for input handling but I also added some related to save states as that is what we will work on in the next step. The default values means users don't need any config files to use the frontend, as long as they like the defaults. It then checks if we have RetroArch config and overrides the defaults with these settings if they exist. FInally we check for a `rustroarch.cfg` file and if so it will override the values with the values in that file.
+
+Lets start keeping track of the size of the executable, I should have done this from the start but here we go:
+
+>  Size of executable so far: 1.1MB
 
 # Step 20 - Saving and Loading state
 
-We are doing well but we still haven't implemented one of my favourite features of emulators, save states.
+We are doing well but we still haven't implemented one of my favourite features of emulators, save states. In the config file we have two settings for the buttons used to trigger saving and loading states:
+
+* `input_save_state`
+* `input_load_state`
+
+So lets first check if the user has pressed either of those buttons and if so print a message to the command line:
