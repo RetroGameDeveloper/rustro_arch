@@ -1616,3 +1616,157 @@ unsafe fn save_state(core_api: &CoreAPI) {
 
 
 This will save the state into the current directory with the hardcoded name `save_state.state` but the problem is this same file will be overriden no matter what ROM you load, ideally it would be good to save a different file based on the game you are playing.
+
+
+After saving a file using RetroArch itself it seems to save with both the ROM name and also a save state index (which can be incremented/decremented by the user) and it also replaces any invalid characters (such as spaces) with the `_` character, this is quite a bit of logic in itself and we will need this logic in both saving and loading of state so lets create a new function for this purpose:
+
+```rust
+fn get_save_state_path(save_directory: &String, game_file_name: &str, save_state_index: u32) -> Option<PathBuf> {
+
+    // Create a subdirectory named "saves" in the current working directory
+    let saves_dir = PathBuf::from(save_directory);
+    if !saves_dir.exists() {
+        match std::fs::create_dir(&saves_dir) {
+            Ok(_) => {}
+            Err(err) => panic!("Failed to create save directory: {:?} Error: {}", &saves_dir, err),
+        }
+    }
+
+    // Generate the save state filename
+    let game_name = Path::new(game_file_name)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .replace(" ", "_");
+    let save_state_file_name = format!("{}_{}.state", game_name, save_state_index);
+
+    // Combine the saves directory and the save state filename to create the full path
+    let save_state_path = saves_dir.join(save_state_file_name);
+
+    Some(save_state_path)
+}
+```
+
+We also added creation of the directory if it doesn't already exist, you can call this function from the `save_state` function like so:
+
+```rust
+let file_path = get_save_state_path(save_directory, &CURRENT_EMULATOR_STATE.rom_name, 0).unwrap(); // hard coded save_slot to 0 for now
+    std::fs::write(&file_path, &state_buffer).unwrap();
+    println!("Save state saved to: {} with size: {}", &file_path.display(), save_state_buffer_size);
+```
+
+Saving states are useless if we can't load them back again, to do that we can pretty much just do the opposite of saving, by calling the `retro_unserialize` libRetro function:
+
+```rust
+pub retro_unserialize: unsafe extern "C" fn(data: *const libc::c_void, size: libc::size_t) -> bool,
+```
+
+So the `load_state` funtion can now look like this:
+
+```rust
+unsafe fn load_state(core_api: &CoreAPI, save_directory: &String) {
+    let file_path = get_save_state_path(save_directory, &CURRENT_EMULATOR_STATE.rom_name, 0).unwrap(); // Hard coded the save_slot to 0 for now
+    let mut state_buffer = Vec::new();
+    match File::open(&file_path) {
+        Ok(mut file) => {
+            // Read the save state file into a buffer
+            match file.read_to_end(&mut state_buffer) {
+                Ok(_) => {
+                    // Call retro_unserialize to apply the save state
+                    let result = (core_api.retro_unserialize)(state_buffer.as_mut_ptr() as *mut c_void, state_buffer.len() as usize);
+                    if result {
+                        println!("Save state loaded from: {}", &file_path.display());
+                    } else {
+                        println!("Failed to load save state: error code {}", result);
+                    }
+                }
+                Err(err) => println!("Error reading save state file: {}", err),
+            }
+        }
+        Err(_) => println!("Save state file not found"),
+    }
+}
+```
+
+
+And we can call it similar to how we call `save_state`:
+
+```rust
+            if &key_as_string == &config["input_save_state"] {
+                unsafe { save_state(&core_api,  &config["savestate_directory"]); }
+                continue;
+            } 
+            if &key_as_string == &config["input_load_state"] {
+                unsafe { load_state(&core_api,  &config["savestate_directory"]); }
+                continue;
+            } 
+```
+
+
+# Step 21 - Supporting save slots
+
+You will notice that we hard coded the `save_slot_index` to 0, we can now store the current save slot index in our global variable and then allow the user to increment and decrement the current save slot, allowing them to have different save states for the same game.
+
+First lets add another field to our global to keep track of the current slot:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u32>>,
+    pixel_format: PixelFormat,
+    bytes_per_pixel: u8, // its only either 2 or 4 bytes per pixel in libretro
+    screen_pitch: u32,
+    screen_width: u32,
+    screen_height: u32,
+    buttons_pressed: Option<Vec<i16>>,
+    current_save_slot: u8
+}
+```
+
+Made it a u8 as 255 values should be more than enough for a single game, but if its not enough for your needs feel free to change the type.
+
+We can now use this vaible by modifying the save and load state functions when calling the `get_save_state_path` function:
+
+```rust
+    let file_path = get_save_state_path(save_directory, &CURRENT_EMULATOR_STATE.rom_name, CURRENT_EMULATOR_STATE.current_save_slot).unwrap();
+```
+
+There are two config variables for allowing the player to change the current save slot selected:
+
+* input_save_slot_decrease
+* input_save_slot_increase
+
+Lets add the default values to the config:
+
+```rust
+("input_state_slot_decrease", "f6"),
+("input_state_slot_increase", "f7"),
+```
+
+And now read them from out input handling code:
+
+```rust
+            if &key_as_string == &config["input_state_slot_increase"] {
+                if CURRENT_EMULATOR_STATE.current_save_slot != 255 {
+                    CURRENT_EMULATOR_STATE.current_save_slot+=1;
+                    println!("Current save slot increased to: {}", CURRENT_EMULATOR_STATE.current_save_slot) 
+                }
+                continue;
+            } 
+            if &key_as_string == &config["input_state_slot_decrease"] {
+  
+                if CURRENT_EMULATOR_STATE.current_save_slot != 0 {
+                    CURRENT_EMULATOR_STATE.current_save_slot-=1;
+                    println!("Current save slot decreased to: {}", CURRENT_EMULATOR_STATE.current_save_slot) 
+                }
+                continue;
+            } 
+```
+
+Now if you run the program you can incfrease and decrease the save slots and it will allow you to have multiple saves for the same game.
+
+# Step 22 - Audio Support
+
+
+# Step 23 - Game Controller support

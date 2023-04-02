@@ -26,7 +26,8 @@ struct EmulatorState {
     screen_pitch: u32,
     screen_width: u32,
     screen_height: u32,
-    buttons_pressed: Option<Vec<i16>>
+    buttons_pressed: Option<Vec<i16>>,
+    current_save_slot: u8
 }
 
 static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
@@ -38,7 +39,8 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     screen_pitch: 0,
     screen_width: 0,
     screen_height: 0,
-    buttons_pressed: None
+    buttons_pressed: None,
+    current_save_slot: 0
 };
 
 fn get_retroarch_config_path() -> PathBuf {
@@ -262,6 +264,8 @@ fn setup_config() -> Result<HashMap<String, String>, String> {
         ("input_load_state", "f4"),
         ("input_screenshot", "f8"),
         ("savestate_directory", "./states"),
+        ("input_state_slot_decrease", "f6"),
+        ("input_state_slot_increase", "f7"),
         ]).iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
@@ -277,7 +281,7 @@ fn setup_config() -> Result<HashMap<String, String>, String> {
     Ok(merged_config.clone())
 }
 
-fn parse_command_line_arguments() -> EmulatorState {
+unsafe fn parse_command_line_arguments() {
     let matches = App::new("RustroArch")
         .arg(
             Arg::with_name("rom_name")
@@ -297,11 +301,8 @@ fn parse_command_line_arguments() -> EmulatorState {
     let library_name = matches.value_of("library_name").unwrap_or("default_library");
     println!("ROM name: {}", rom_name);
     println!("Core Library name: {}", library_name);
-    return EmulatorState {
-        rom_name: rom_name.to_string(), core_name: library_name.to_string(), frame_buffer: None, bytes_per_pixel: 4, 
-        pixel_format: PixelFormat::ARGB8888, screen_height: 0, screen_pitch:0, screen_width:0, buttons_pressed: Some(vec![0; 16])
-    }
-    
+    CURRENT_EMULATOR_STATE.rom_name = rom_name.to_string();
+    CURRENT_EMULATOR_STATE.core_name = library_name.to_string();
 }
 
 unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
@@ -322,7 +323,7 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
     return was_load_successful;
 }
 
-fn get_save_state_path(save_directory: &String, game_file_name: &str, save_state_index: u32) -> Option<PathBuf> {
+fn get_save_state_path(save_directory: &String, game_file_name: &str, save_state_index: u8) -> Option<PathBuf> {
 
     // Create a subdirectory named "saves" in the current working directory
     let saves_dir = PathBuf::from(save_directory);
@@ -352,13 +353,13 @@ unsafe fn save_state(core_api: &CoreAPI, save_directory: &String) {
     let mut state_buffer: Vec<u8> = vec![0; save_state_buffer_size];
     // Call retro_serialize to create the save state
     (core_api.retro_serialize)(state_buffer.as_mut_ptr() as *mut c_void, save_state_buffer_size);
-    let file_path = get_save_state_path(save_directory, &CURRENT_EMULATOR_STATE.rom_name, 0).unwrap();
+    let file_path = get_save_state_path(save_directory, &CURRENT_EMULATOR_STATE.rom_name, CURRENT_EMULATOR_STATE.current_save_slot).unwrap();
     std::fs::write(&file_path, &state_buffer).unwrap();
     println!("Save state saved to: {} with size: {}", &file_path.display(), save_state_buffer_size);
 }
 
 unsafe fn load_state(core_api: &CoreAPI, save_directory: &String) {
-    let file_path = get_save_state_path(save_directory, &CURRENT_EMULATOR_STATE.rom_name, 0).unwrap();
+    let file_path = get_save_state_path(save_directory, &CURRENT_EMULATOR_STATE.rom_name, CURRENT_EMULATOR_STATE.current_save_slot).unwrap();
     let mut state_buffer = Vec::new();
     match File::open(&file_path) {
         Ok(mut file) => {
@@ -381,7 +382,7 @@ unsafe fn load_state(core_api: &CoreAPI, save_directory: &String) {
 }
 
 fn main() {
-    unsafe { CURRENT_EMULATOR_STATE = parse_command_line_arguments() };
+    unsafe { parse_command_line_arguments() };
     let config = setup_config().unwrap();
 
     let key_device_map = HashMap::from([
@@ -443,6 +444,7 @@ fn main() {
         
         let mini_fb_keys = window.get_keys_pressed(KeyRepeat::Yes).unwrap();
 
+unsafe {
         // Input Handling for the keys pressed in minifb cargo
         for key in mini_fb_keys {
             let key_as_string = format!("{:?}", key).to_ascii_lowercase();
@@ -452,17 +454,32 @@ fn main() {
                 continue;
             } 
             if &key_as_string == &config["input_save_state"] {
-                unsafe { save_state(&core_api,  &config["savestate_directory"]); }
+                 save_state(&core_api,  &config["savestate_directory"]);
                 continue;
             } 
             if &key_as_string == &config["input_load_state"] {
-                unsafe { load_state(&core_api,  &config["savestate_directory"]); }
+                 load_state(&core_api,  &config["savestate_directory"]);
+                continue;
+            } 
+            if &key_as_string == &config["input_state_slot_increase"] {
+                
+                if CURRENT_EMULATOR_STATE.current_save_slot != 255 {
+                    CURRENT_EMULATOR_STATE.current_save_slot+=1;
+                    println!("Current save slot increased to: {}", CURRENT_EMULATOR_STATE.current_save_slot) 
+                }
+                continue;
+            } 
+            if &key_as_string == &config["input_state_slot_decrease"] {
+                
+                if CURRENT_EMULATOR_STATE.current_save_slot != 0 {
+                    CURRENT_EMULATOR_STATE.current_save_slot-=1;
+                    println!("Current save slot decreased to: {}", CURRENT_EMULATOR_STATE.current_save_slot) 
+                }
                 continue;
             } 
             println!("Unhandled Key Pressed: {} ", key_as_string);
         }
-                    
-        unsafe {
+
             CURRENT_EMULATOR_STATE.buttons_pressed = Some(this_frames_pressed_buttons);
             
             match &CURRENT_EMULATOR_STATE.frame_buffer {
