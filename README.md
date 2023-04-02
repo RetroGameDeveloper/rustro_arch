@@ -1561,3 +1561,58 @@ We are doing well but we still haven't implemented one of my favourite features 
 * `input_load_state`
 
 So lets first check if the user has pressed either of those buttons and if so print a message to the command line:
+
+```rust
+ // Input Handling for the keys pressed in minifb cargo
+        for key in mini_fb_keys {
+            let key_as_string = format!("{:?}", key).to_ascii_lowercase();
+
+            if let Some(libretro_button_id) = key_device_map.get(&key_as_string) {
+                this_frames_pressed_buttons[*libretro_button_id] = 1;
+                continue;
+            } 
+            if &key_as_string == &config["input_save_state"] {
+                println!("Save state called");
+                continue;
+            } 
+            if &key_as_string == &config["input_load_state"] {
+                println!("Load state called");
+                continue;
+            } 
+            println!("Unhandled Key Pressed: {} ", key_as_string);
+        }
+```
+
+So now when we press the buttons it will at least write the message to the console, so the next question is how do we call the core to create a save state?
+
+LibRetro has a function called `retro_serialize` which has the following signature:
+
+```rust
+pub retro_serialize: unsafe extern "C" fn(data: *mut libc::c_void, size: libc::size_t)
+```
+
+So we need to pass in a mutable buffer that the core can put all the save data in, along with the size of that buffer.
+
+But how do we know how large the buffer should be, well libRetro also has us covered there with this function:
+
+```rust
+pub retro_serialize_size: unsafe extern "C" fn() -> libc::size_t,
+```
+
+
+We can put all this logic in its own function and use the builtin rust library to write it to a file like so:
+
+```rust
+unsafe fn save_state(core_api: &CoreAPI) {
+    let save_state_buffer_size =  (core_api.retro_serialize_size)();
+    let mut state_buffer: Vec<u8> = vec![0; save_state_buffer_size];
+    // Call retro_serialize to create the save state
+    (core_api.retro_serialize)(state_buffer.as_mut_ptr() as *mut c_void, save_state_buffer_size);
+    let file_path = "./save_state.state";
+    std::fs::write(file_path, &state_buffer).unwrap();
+    println!("Save state saved to: {} with size: {}", file_path, save_state_buffer_size);
+}
+```
+
+
+This will save the state into the current directory with the hardcoded name `save_state.state` but the problem is this same file will be overriden no matter what ROM you load, ideally it would be good to save a different file based on the game you are playing.

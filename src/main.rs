@@ -272,7 +272,7 @@ fn setup_config() -> Result<HashMap<String, String>, String> {
        _ => println!("We don't have RustroArch config",)
     }
     // println!("retro_arch_config_path: {} merged_config: {:?}", retro_arch_config_path.join("config/retroarch.cfg").display(), merged_config);
-    Ok(merged_config)
+    Ok(merged_config.clone())
 }
 
 fn parse_command_line_arguments() -> EmulatorState {
@@ -318,6 +318,16 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
     }
     println!("ROM was successfully loaded");
     return was_load_successful;
+}
+
+unsafe fn save_state(core_api: &CoreAPI) {
+    let save_state_buffer_size =  (core_api.retro_serialize_size)();
+    let mut state_buffer: Vec<u8> = vec![0; save_state_buffer_size];
+    // Call retro_serialize to create the save state
+    (core_api.retro_serialize)(state_buffer.as_mut_ptr() as *mut c_void, save_state_buffer_size);
+    let file_path = "./save_state.state";
+    std::fs::write(file_path, &state_buffer).unwrap();
+    println!("Save state saved to: {} with size: {}", file_path, save_state_buffer_size);
 }
 
 fn main() {
@@ -389,10 +399,17 @@ fn main() {
 
             if let Some(libretro_button_id) = key_device_map.get(&key_as_string) {
                 this_frames_pressed_buttons[*libretro_button_id] = 1;
-            } else {
-                println!("Unhandled Key Pressed: {} ", key_as_string);
-            }
-            // TODO: handle input_save_state for save states
+                continue;
+            } 
+            if &key_as_string == &config["input_save_state"] {
+                unsafe { save_state(&core_api); }
+                continue;
+            } 
+            if &key_as_string == &config["input_load_state"] {
+                println!("Load state called");
+                continue;
+            } 
+            println!("Unhandled Key Pressed: {} ", key_as_string);
         }
                     
         unsafe {
