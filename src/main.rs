@@ -3,7 +3,7 @@ extern crate libloading;
 use clap::{App, Arg};
 
 use libloading::Library;
-use libretro_sys::{CoreAPI, GameInfo, PixelFormat};
+use libretro_sys::{CoreAPI, GameInfo, PixelFormat, SystemAvInfo, GameGeometry, SystemTiming};
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use std::collections::HashMap;
 use std::ffi::{c_void, CString};
@@ -13,6 +13,9 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::{env, fs, ptr}; // Add this line to import the Read trait
+use rodio::{Sink, OutputStream, OutputStreamHandle};
+use rodio::buffer::SamplesBuffer;
+
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
 
@@ -20,6 +23,7 @@ struct EmulatorState {
     rom_name: String,
     core_name: String,
     frame_buffer: Option<Vec<u32>>,
+    audio_data: Option<Vec<i16>>,
     pixel_format: PixelFormat,
     bytes_per_pixel: u8, // its only either 2 or 4 bytes per pixel in libretro
     screen_pitch: u32,
@@ -33,6 +37,7 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     rom_name: String::new(),
     core_name: String::new(),
     frame_buffer: None,
+    audio_data: None,
     pixel_format: PixelFormat::ARGB8888,
     bytes_per_pixel: 4,
     screen_pitch: 0,
@@ -150,15 +155,17 @@ unsafe extern "C" fn libretro_set_input_state_callback(
 }
 
 unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
-    // println!("libretro_set_audio_sample_callback");
+    println!("libretro_set_audio_sample_callback left channel: {} right: {}", left, right);
 }
 
+const AUDIO_CHANNELS: usize = 2; // left and right
 unsafe extern "C" fn libretro_set_audio_sample_batch_callback(
-    data: *const i16,
+    audio_data: *const i16,
     frames: libc::size_t,
 ) -> libc::size_t {
-    // println!("libretro_set_audio_sample_batch_callback");
-    return 1;
+    let audio_slice = std::slice::from_raw_parts(audio_data, frames * AUDIO_CHANNELS);
+    CURRENT_EMULATOR_STATE.audio_data = Some(audio_slice.to_vec());
+    return frames;
 }
 
 unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
@@ -366,6 +373,21 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
     return was_load_successful;
 }
 
+unsafe fn play_audio( sink: &Sink) {
+    match &CURRENT_EMULATOR_STATE.audio_data {
+        Some(data) => {
+            if sink.empty() {
+                let audio_slice = std::slice::from_raw_parts(data.as_ptr() as *const i16, data.len());
+                let source = SamplesBuffer::new(2, 32768*2, audio_slice);
+                sink.append(source);
+                sink.play();
+                sink.sleep_until_end();
+            }
+        },
+        None => {},
+    };
+}
+
 fn get_save_state_path(
     save_directory: &String,
     game_file_name: &str,
@@ -513,16 +535,32 @@ fn main() {
     let mut fps_timer = Instant::now();
     let mut fps_counter = 0;
     let core_api;
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let sink = Sink::try_new(&stream_handle).unwrap();
 
     unsafe {
         core_api = load_core(&CURRENT_EMULATOR_STATE.core_name);
         (core_api.retro_init)();
+        let mut av_info = SystemAvInfo {
+            geometry: GameGeometry {
+                base_width: 0,
+                base_height: 0,
+                max_width: 0,
+                max_height: 0,
+                aspect_ratio: 0.0,
+            },
+            timing: SystemTiming {
+                fps: 0.0,
+                sample_rate: 0.0,
+            },
+        };
+        (core_api.retro_get_system_av_info)(&mut av_info);
+        println!("AV Info: {:?}", &av_info);
         println!("About to load ROM: {}", CURRENT_EMULATOR_STATE.rom_name);
         load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
     }
 
     window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Limit to ~60fps
-
     while window.is_open() && !window.is_key_down(Key::Escape) {
         // Call the libRetro core every frame
         unsafe {
@@ -584,6 +622,7 @@ fn main() {
             }
 
             CURRENT_EMULATOR_STATE.buttons_pressed = Some(this_frames_pressed_buttons);
+            play_audio(&sink);
 
             match &CURRENT_EMULATOR_STATE.frame_buffer {
                 Some(buffer) => {

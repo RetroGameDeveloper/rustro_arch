@@ -1463,7 +1463,6 @@ println!("Key for Player 1 A button: {}", config["input_player1_a"]);
 
 This is great but the problem with this is the result is a string of the keyboard letter pressed and we need to map it to the correct `minifb` Key enum type in order to use it.
 
-
 ```rust
 let config = setup_config().unwrap();
 
@@ -1483,7 +1482,6 @@ let key_device_map = HashMap::from([
  ]);
 ```
 
-
 Now we can rewrite our input handling logic to look like this:
 
 ```rust
@@ -1502,7 +1500,6 @@ Now we can rewrite our input handling logic to look like this:
         }
    
 ```
-
 
 This is great but we shouldn't expect the user to have RetroArch installed and have a valid config, and we need to support the case where they might want different settings for out frontend compared to their RetroArch, so lets set up some default values and allow users to override them if they have a file called `rustroarch.cfg`.
 
@@ -1551,7 +1548,7 @@ In this code first we setup some default config values, mainly for input handlin
 
 Lets start keeping track of the size of the executable, I should have done this from the start but here we go:
 
->  Size of executable so far: 1.1MB
+> Size of executable so far: 1.1MB
 
 # Step 20 - Saving and Loading state
 
@@ -1599,7 +1596,6 @@ But how do we know how large the buffer should be, well libRetro also has us cov
 pub retro_serialize_size: unsafe extern "C" fn() -> libc::size_t,
 ```
 
-
 We can put all this logic in its own function and use the builtin rust library to write it to a file like so:
 
 ```rust
@@ -1614,9 +1610,7 @@ unsafe fn save_state(core_api: &CoreAPI) {
 }
 ```
 
-
 This will save the state into the current directory with the hardcoded name `save_state.state` but the problem is this same file will be overriden no matter what ROM you load, ideally it would be good to save a different file based on the game you are playing.
-
 
 After saving a file using RetroArch itself it seems to save with both the ROM name and also a save state index (which can be incremented/decremented by the user) and it also replaces any invalid characters (such as spaces) with the `_` character, this is quite a bit of logic in itself and we will need this logic in both saving and loading of state so lets create a new function for this purpose:
 
@@ -1688,7 +1682,6 @@ unsafe fn load_state(core_api: &CoreAPI, save_directory: &String) {
 }
 ```
 
-
 And we can call it similar to how we call `save_state`:
 
 ```rust
@@ -1701,7 +1694,6 @@ And we can call it similar to how we call `save_state`:
                 continue;
             } 
 ```
-
 
 # Step 21 - Supporting save slots
 
@@ -1768,5 +1760,133 @@ Now if you run the program you can incfrease and decrease the save slots and it 
 
 # Step 22 - Audio Support
 
+So far the game is playable but rather... quiet, lets change that by adding audio support!
 
-# Step 23 - Game Controller support
+We already implemented the two audio callbacks as dummy functions before to prevent the core from causing a segmentation fault but they don't do anything yet:
+
+```rust
+unsafe extern "C" fn libretro_set_audio_sample_callback(left: i16, right: i16) {
+    println!("libretro_set_audio_sample_callback left channel: {} right: {}", left, right);
+
+
+unsafe extern "C" fn libretro_set_audio_sample_batch_callback(
+    data: *const i16,
+    frames: libc::size_t,
+) -> libc::size_t {
+    // println!("libretro_set_audio_sample_batch_callback");
+    return 1;
+}
+```
+
+The first function `libretro_set_audio_sample_callback` doesn't seem to be used by the Gambate core that I am using for testing so we will need to come back to this when we find a core that requires it.
+
+So `libretro_set_audio_sample_batch_callback` seems to have two paramerters, one is a data buffer that contains both the left and right audio channel dataper frame and the other is the number of frames that are in the buffer.
+
+Before we can use this data we first need to figure out how we can play audio in rust across all the major Operating Systems. So after a quick google search the first resut was the `rodio` crate, so lets add it to our Cargo project:
+
+```rust
+cargo add rodio
+```
+
+Now lets try to get the main example from the Rodio documentation to work:
+
+```rust
+use std::fs::File;
+use std::io::BufReader;
+use std::time::Duration;
+use rodio::{Decoder, OutputStream, Sink};
+use rodio::source::{SineWave, Source};
+
+fn play_audio() {
+  let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+  let sink = Sink::try_new(&stream_handle).unwrap();
+
+  // Add a dummy source of the sake of the example.
+  let source = SineWave::new(440.0).take_duration(Duration::from_secs_f32(0.25)).amplify(0.20);
+  sink.append(source);
+
+  // The sound plays in a separate thread. This call will block the current thread until the sink
+  // has finished playing all its queued sounds.
+  sink.sleep_until_end();
+}
+```
+
+Now call `play_audio` somewhere in the main game loop for example:
+
+```rust
+unsafe {
+            (core_api.retro_run)();
+        }
+        play_audio();
+```
+
+If all went well you will get an annoying sound while the game is playing, but how do we convert the buffer that the callback gives us into something that rodio can play?
+
+First lets add an audio_data buffer to our global variable so that we can pass it between the callback and the play_audio function:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u32>>,
+    audio_data: Option<Vec<i16>>,
+```
+
+Now lets update the callback so that it sets the global variables value every time its called:
+
+```rust
+const AUDIO_CHANNELS: usize = 2; // left and right
+unsafe extern "C" fn libretro_set_audio_sample_batch_callback(
+    audio_data: *const i16,
+    frames: libc::size_t,
+) -> libc::size_t {
+    let audio_slice = std::slice::from_raw_parts(audio_data, frames * AUDIO_CHANNELS);
+    CURRENT_EMULATOR_STATE.audio_data = Some(audio_slice.to_vec());
+    return frames;
+}
+```
+
+We need to be able to take that audio_data and play it back inside Rodeo, for this Rodeo provides a SamplesBuffer that we can use as a source:
+
+```rust
+ match &CURRENT_EMULATOR_STATE.audio_data {
+        Some(data) => {
+            if sink.empty() {
+                let audio_slice = std::slice::from_raw_parts(data.as_ptr() as *const i16, data.len());
+                let source = SamplesBuffer::new(2, 32768*2, audio_slice);
+                sink.append(source);
+                sink.play();
+                sink.sleep_until_end();
+            }
+        },
+        None => {},
+    };
+```
+
+If you run the program now you will notice that it starts to play audio, but in a very slow manner, turns out audio processing is very cpu time consuming.
+
+You will also notice a massive dip in the frame rate, this is because we are setting up a brand new audio sink every frame, lets move this logic out ibefore the main loop and pass the Sink in to the play_audio function:
+
+```rust
+let core_api;
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let sink = Sink::try_new(&stream_handle).unwrap();
+```
+
+Now just pass it into the call to `play_audio` like so:
+
+```rust
+play_audio(&sink);
+```
+
+You will notice that this has helped the frame rate a bit (around 30 fps on my machine) but its still half of what it was before we added audio support, in the next step we can sort this.
+
+> Size of executable so far: 1.4MB
+
+# Step 23 - Creating an Audio Thread
+
+Audio processing is very cpu intensive and so far we have done all our logic in a single thread, this is now affecting the frame rate of games  being played in our frontend. One solution for this is to put the audio processing in its own thread and just pass the audio data between the threads.
+
+
+
+# Step ? - Game Controller support

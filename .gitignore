@@ -10,3 +10,8 @@ Cargo.lock
 **/*.rs.bk
 rustroarch.cfg
 .DS_Store
+*.dylib
+*.zip
+*.gb
+states/
+*.state
