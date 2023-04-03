@@ -1,6 +1,24 @@
 # rustro_arch
 
-A small lightweight LibRetro Frontend written in Rust (learning project)
+A small lightweight LibRetro Frontend written in Rust for MacOSX/Linux/Windows.
+
+## Features
+
+* Save/Load Save States
+* Multiple Save Slots for each game
+* Remappable Buttons
+* Supports RetroArch config loading (`retroarch.cfg`)
+* Limited Audio Support
+
+
+---
+
+# Creating your own LibRetro Frontend in Rust Tutorial
+
+
+Additionally, this document serves as a tutorial that will guide you through the process of creating your own libretro frontend.
+
+By following the steps below, you can learn how it works and get started right away.
 
 # Step 1 - Setup MiniFB
 
@@ -1886,7 +1904,5 @@ You will notice that this has helped the frame rate a bit (around 30 fps on my m
 # Step 23 - Creating an Audio Thread
 
 Audio processing is very cpu intensive and so far we have done all our logic in a single thread, this is now affecting the frame rate of games  being played in our frontend. One solution for this is to put the audio processing in its own thread and just pass the audio data between the threads.
-
-
 
 # Step ? - Game Controller support
