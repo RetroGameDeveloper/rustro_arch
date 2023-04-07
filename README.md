@@ -10,11 +10,9 @@ A small lightweight LibRetro Frontend written in Rust for MacOSX/Linux/Windows.
 * Supports RetroArch config loading (`retroarch.cfg`)
 * Limited Audio Support
 
-
 ---
 
 # Creating your own LibRetro Frontend in Rust Tutorial
-
 
 Additionally, this document serves as a tutorial that will guide you through the process of creating your own libretro frontend.
 
@@ -1871,7 +1869,7 @@ We need to be able to take that audio_data and play it back inside Rodeo, for th
         Some(data) => {
             if sink.empty() {
                 let audio_slice = std::slice::from_raw_parts(data.as_ptr() as *const i16, data.len());
-                let source = SamplesBuffer::new(2, 32768*2, audio_slice);
+                let source = SamplesBuffer::new(2, 32768, audio_slice);
                 sink.append(source);
                 sink.play();
                 sink.sleep_until_end();
@@ -1904,5 +1902,76 @@ You will notice that this has helped the frame rate a bit (around 30 fps on my m
 # Step 23 - Creating an Audio Thread
 
 Audio processing is very cpu intensive and so far we have done all our logic in a single thread, this is now affecting the frame rate of games  being played in our frontend. One solution for this is to put the audio processing in its own thread and just pass the audio data between the threads.
+
+Lets first modify the Audio setup so that iut creates a new thread and creates the Rodeo Sink inside that thread like so:
+
+```rust
+// Audio Setup
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+
+    // Create a channel for passing audio samples from the main thread to the audio thread
+    let (sender, receiver) = channel();
+
+    // Spawn a new thread to play back audio
+    let audio_thread = thread::spawn(move || {
+        let sink = Sink::try_new(&stream_handle).unwrap();
+        loop {
+            // Receive the next set of audio samples from the channel
+            let audio_samples = receiver.recv().unwrap();
+            unsafe { play_audio(&sink, audio_samples); } // pass the audio samples to the play_audio function
+        }
+    });
+```
+
+In this example, we create a channel using the channel function from the `std::sync::mpsc` module. The sender and receiver variables are used to send and receive audio samples between the main thread and the audio thread, respectively.
+
+Since we don't want to directly use the same variable in both threads we need to create a new function to send the audio data over ever frame:
+
+```rust
+unsafe fn send_audio_to_thread(sender: &Sender<&Vec<i16>>) {
+    // Send the audio samples to the audio thread using the channel
+    match &CURRENT_EMULATOR_STATE.audio_data {
+        Some(data) => {
+            sender.send(data).unwrap();
+        },
+        None => {},
+    };
+  
+}
+```
+
+
+Now we modify the `play_audio` function so that we can have the audio samples passed in from the thread:
+
+```rust
+unsafe fn play_audio( sink: &Sink, audio_samples: &Vec<i16>) {
+    if sink.empty() {
+        let audio_slice = std::slice::from_raw_parts(audio_samples.as_ptr() as *const i16, audio_samples.len());
+        let source = SamplesBuffer::new(2, 32768, audio_slice);
+        sink.append(source);
+        sink.play();
+        sink.sleep_until_end();
+    }
+
+```
+
+Now in the main game loop lets replace the call to play_audio with a call to send_audio instead:
+
+```rust
+send_audio_to_thread(&sender);
+```
+
+Run the program and you will notice that we not only have audio but we are again running at full frame rate, multi-threading for the win!
+
+Although sometimes when you exist the program you will get the following error:
+
+```rust
+thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value: RecvError'
+```
+
+# Step 24 - Get Audio/Video Data from the core
+
+You will notice that in the previous step we hard coded the audio sample rate at `32768`, while this is correct for the Game Boy, it won;'t be correct for other cores, so it would be ideal to be able to allow each core to specify its own sample rate. This is where the function `` comes in.
+
 
 # Step ? - Game Controller support

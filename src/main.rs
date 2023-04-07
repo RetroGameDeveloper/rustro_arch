@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 use std::{env, fs, ptr}; // Add this line to import the Read trait
 use rodio::{Sink, OutputStream, OutputStreamHandle};
 use rodio::buffer::SamplesBuffer;
+use std::sync::mpsc::{channel, Sender};
+use std::thread;
+
 
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
@@ -373,19 +376,25 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
     return was_load_successful;
 }
 
-unsafe fn play_audio( sink: &Sink) {
+unsafe fn send_audio_to_thread(sender: &Sender<&Vec<i16>>) {
+    // Send the audio samples to the audio thread using the channel
     match &CURRENT_EMULATOR_STATE.audio_data {
         Some(data) => {
-            if sink.empty() {
-                let audio_slice = std::slice::from_raw_parts(data.as_ptr() as *const i16, data.len());
-                let source = SamplesBuffer::new(2, 32768*2, audio_slice);
-                sink.append(source);
-                sink.play();
-                sink.sleep_until_end();
-            }
+            sender.send(data).unwrap();
         },
         None => {},
     };
+    
+}
+
+unsafe fn play_audio( sink: &Sink, audio_samples: &Vec<i16>) {
+    if sink.empty() {
+        let audio_slice = std::slice::from_raw_parts(audio_samples.as_ptr() as *const i16, audio_samples.len());
+        let source = SamplesBuffer::new(2, 32768, audio_slice);
+        sink.append(source);
+        sink.play();
+        sink.sleep_until_end();
+    }
 }
 
 fn get_save_state_path(
@@ -535,8 +544,22 @@ fn main() {
     let mut fps_timer = Instant::now();
     let mut fps_counter = 0;
     let core_api;
+
+    // Audio Setup
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-    let sink = Sink::try_new(&stream_handle).unwrap();
+
+    // Create a channel for passing audio samples from the main thread to the audio thread
+    let (sender, receiver) = channel();
+
+    // Spawn a new thread to play back audio
+    let audio_thread = thread::spawn(move || {
+        let sink = Sink::try_new(&stream_handle).unwrap();
+        loop {
+            // Receive the next set of audio samples from the channel
+            let audio_samples = receiver.recv().unwrap();
+            unsafe { play_audio(&sink, audio_samples); }
+        }
+    });
 
     unsafe {
         core_api = load_core(&CURRENT_EMULATOR_STATE.core_name);
@@ -622,7 +645,7 @@ fn main() {
             }
 
             CURRENT_EMULATOR_STATE.buttons_pressed = Some(this_frames_pressed_buttons);
-            play_audio(&sink);
+            send_audio_to_thread(&sender);
 
             match &CURRENT_EMULATOR_STATE.frame_buffer {
                 Some(buffer) => {
@@ -649,4 +672,5 @@ fn main() {
             }
         }
     }
+    // Cleanup at the end
 }
