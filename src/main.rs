@@ -18,6 +18,7 @@ use rodio::buffer::SamplesBuffer;
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 
+use gilrs::{Gilrs, Button, Event};
 
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
@@ -34,6 +35,7 @@ struct EmulatorState {
     screen_height: u32,
     buttons_pressed: Option<Vec<i16>>,
     current_save_slot: u8,
+    av_info: Option<SystemAvInfo>
 }
 
 static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
@@ -48,6 +50,7 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     screen_height: 0,
     buttons_pressed: None,
     current_save_slot: 0,
+    av_info: None
 };
 
 fn get_retroarch_config_path() -> PathBuf {
@@ -314,6 +317,7 @@ fn setup_config() -> Result<HashMap<String, String>, String> {
         ("savestate_directory", "./states"),
         ("input_state_slot_decrease", "f6"),
         ("input_state_slot_increase", "f7"),
+        // ("audio_enable", "true"),
     ])
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -387,10 +391,10 @@ unsafe fn send_audio_to_thread(sender: &Sender<&Vec<i16>>) {
     
 }
 
-unsafe fn play_audio( sink: &Sink, audio_samples: &Vec<i16>) {
+unsafe fn play_audio( sink: &Sink, audio_samples: &Vec<i16>, sample_rate: u32) {
     if sink.empty() {
         let audio_slice = std::slice::from_raw_parts(audio_samples.as_ptr() as *const i16, audio_samples.len());
-        let source = SamplesBuffer::new(2, 32768, audio_slice);
+        let source = SamplesBuffer::new(2, sample_rate, audio_slice);
         sink.append(source);
         sink.play();
         sink.sleep_until_end();
@@ -481,11 +485,8 @@ unsafe fn load_state(core_api: &CoreAPI, save_directory: &String) {
     }
 }
 
-fn main() {
-    unsafe { parse_command_line_arguments() };
-    let config = setup_config().unwrap();
-
-    let key_device_map = HashMap::from([
+fn setup_key_device_map(config: &HashMap<String, String>) -> HashMap<&String, usize> {
+    return HashMap::from([
         (
             &config["input_player1_a"],
             libretro_sys::DEVICE_ID_JOYPAD_A as usize,
@@ -535,6 +536,74 @@ fn main() {
             libretro_sys::DEVICE_ID_JOYPAD_SELECT as usize,
         ),
     ]);
+}
+fn setup_joypad_device_map() -> HashMap<Button, usize> {
+    return HashMap::from([
+        (
+            Button::South,
+            libretro_sys::DEVICE_ID_JOYPAD_A as usize,
+        ),
+        (
+            Button::East,
+            libretro_sys::DEVICE_ID_JOYPAD_B as usize,
+        ),
+        (
+            Button::West,
+            libretro_sys::DEVICE_ID_JOYPAD_X as usize,
+        ),
+        (
+            Button::North,
+            libretro_sys::DEVICE_ID_JOYPAD_Y as usize,
+        ),
+        (
+            Button::LeftTrigger,
+            libretro_sys::DEVICE_ID_JOYPAD_L as usize,
+        ),
+        (
+            Button::LeftTrigger2,
+            libretro_sys::DEVICE_ID_JOYPAD_L2 as usize,
+        ),
+        (
+            Button::RightTrigger,
+            libretro_sys::DEVICE_ID_JOYPAD_R as usize,
+        ),
+        (
+            Button::RightTrigger2,
+            libretro_sys::DEVICE_ID_JOYPAD_R2 as usize,
+        ),
+        (
+            Button::DPadDown,            
+            libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize,
+        ),
+        (
+            Button::DPadUp,
+            libretro_sys::DEVICE_ID_JOYPAD_UP as usize,
+        ),
+        (
+            Button::DPadRight,
+            libretro_sys::DEVICE_ID_JOYPAD_RIGHT as usize,
+        ),
+        (
+            Button::DPadLeft,
+            libretro_sys::DEVICE_ID_JOYPAD_LEFT as usize,
+        ),
+        (
+            Button::Start,
+            libretro_sys::DEVICE_ID_JOYPAD_START as usize,
+        ),
+        (
+            Button::Select,
+            libretro_sys::DEVICE_ID_JOYPAD_SELECT as usize,
+        ),
+    ]);
+}
+
+fn main() {
+    unsafe { parse_command_line_arguments() };
+    let config = setup_config().unwrap();
+
+    let key_device_map = setup_key_device_map(&config);
+    let joypad_device_map = setup_joypad_device_map();
 
     println!("Setting up minifb window");
     let mut window =
@@ -553,14 +622,23 @@ fn main() {
     // Spawn a new thread to play back audio
     let audio_thread = thread::spawn(move || {
         println!("Audio Thread Started");
+        let sample_rate = unsafe { match &CURRENT_EMULATOR_STATE.av_info {
+            Some(av_info) => av_info.timing.sample_rate,
+            None => 0.0
+        }
+        };
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&stream_handle).unwrap();
         loop {
             // Receive the next set of audio samples from the channel
             let audio_samples = receiver.recv().unwrap();
-            unsafe { play_audio(&sink, audio_samples); }
+            unsafe { play_audio(&sink, audio_samples, sample_rate as u32); }
         }
     });
+
+    println!("Gamepad Setup");
+    let mut gilrs = Gilrs::new().unwrap();
+    let mut active_gamepad = None;
 
     unsafe {
         println!("Setting up Core");
@@ -581,6 +659,7 @@ fn main() {
         };
         (core_api.retro_get_system_av_info)(&mut av_info);
         println!("AV Info: {:?}", &av_info);
+        CURRENT_EMULATOR_STATE.av_info = Some(av_info);
         println!("About to load ROM: {}", CURRENT_EMULATOR_STATE.rom_name);
         load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
     }
@@ -605,6 +684,24 @@ fn main() {
         let mut this_frames_pressed_buttons = vec![0; 16];
 
         let mini_fb_keys = window.get_keys_pressed(KeyRepeat::Yes).unwrap();
+
+        // Gamepad input Handling
+        // Examine new events
+        while let Some(Event { id, event, time }) = gilrs.next_event() {
+            // println!("{:?} New event from {}: {:?}", time, id, event);
+            active_gamepad = Some(id);
+        }
+
+        // You can also use cached gamepad state
+        if let Some(gamepad) = active_gamepad.map(|id| gilrs.gamepad(id)) {
+            for button in [Button::South, Button::North, Button::East, Button::West, Button::Start, Button::Select, Button::DPadDown, Button::DPadUp, Button::DPadLeft, Button::DPadRight, Button::LeftTrigger, Button::LeftTrigger2, Button::RightTrigger, Button::RightTrigger2] {
+                if gamepad.is_pressed(button) {
+                    println!("Button Pressed: {:?}", button);
+                    let libretro_button = joypad_device_map.get(&button).unwrap();
+                    this_frames_pressed_buttons[*libretro_button] = 1;
+                }
+            }
+        }
 
         unsafe {
             // Input Handling for the keys pressed in minifb cargo

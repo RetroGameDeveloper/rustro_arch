@@ -1940,7 +1940,6 @@ unsafe fn send_audio_to_thread(sender: &Sender<&Vec<i16>>) {
 }
 ```
 
-
 Now we modify the `play_audio` function so that we can have the audio samples passed in from the thread:
 
 ```rust
@@ -1971,7 +1970,238 @@ thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value: Rec
 
 # Step 24 - Get Audio/Video Data from the core
 
-You will notice that in the previous step we hard coded the audio sample rate at `32768`, while this is correct for the Game Boy, it won;'t be correct for other cores, so it would be ideal to be able to allow each core to specify its own sample rate. This is where the function `` comes in.
+You will notice that in the previous step we hard coded the audio sample rate at `32768`, while this is correct for the Game Boy, it won;'t be correct for other cores, so it would be ideal to be able to allow each core to specify its own sample rate. This is where the libRetro function `retro_get_system_av_info` comes in.
+
+So just after the call to `retro_init` we can call it and print the result we get back like so:
+
+```rust
+let mut av_info = SystemAvInfo {
+            geometry: GameGeometry {
+                base_width: 0,
+                base_height: 0,
+                max_width: 0,
+                max_height: 0,
+                aspect_ratio: 0.0,
+            },
+            timing: SystemTiming {
+                fps: 0.0,
+                sample_rate: 0.0,
+            },
+        };
+        (core_api.retro_get_system_av_info)(&mut av_info);
+        println!("AV Info: {:?}", &av_info);
+```
+
+Now we just need to save this information in our global variable so we can refer to the sample_rate from out audio code, lets modify the definition of EmulatorState to add av_info:
+
+```rust
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u32>>,
+    audio_data: Option<Vec<i16>>,
+    pixel_format: PixelFormat,
+    bytes_per_pixel: u8, // its only either 2 or 4 bytes per pixel in libretro
+    screen_pitch: u32,
+    screen_width: u32,
+    screen_height: u32,
+    buttons_pressed: Option<Vec<i16>>,
+    current_save_slot: u8,
+    av_info: Option<SystemAvInfo>
+}
+
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+    audio_data: None,
+    pixel_format: PixelFormat::ARGB8888,
+    bytes_per_pixel: 4,
+    screen_pitch: 0,
+    screen_width: 0,
+    screen_height: 0,
+    buttons_pressed: None,
+    current_save_slot: 0,
+    av_info: None
+};
+```
+
+Now modify the code after the call to `retro_get_system_av_info` to set the global variable:
+
+```rust
+(core_api.retro_get_system_av_info)(&mut av_info);
+        println!("AV Info: {:?}", &av_info);
+        CURRENT_EMULATOR_STATE.av_info = Some(av_info);
+```
+
+We can now update the `play_audio` function to n ow take in the sample_rate:
+
+```rust
+unsafe fn play_audio( sink: &Sink, audio_samples: &Vec<i16>, sample_rate: u32) {
+    if sink.empty() {
+        let audio_slice = std::slice::from_raw_parts(audio_samples.as_ptr() as *const i16, audio_samples.len());
+        let source = SamplesBuffer::new(2, sample_rate, audio_slice);
+        sink.append(source);
+        sink.play();
+        sink.sleep_until_end();
+    }
+}
+```
+
+And to get the global sample rate and padd it to play audio we need to change the audio thread code to the following:
+
+```rust
+let audio_thread = thread::spawn(move || {
+        println!("Audio Thread Started");
+        let sample_rate = unsafe { match &CURRENT_EMULATOR_STATE.av_info {
+            Some(av_info) => av_info.timing.sample_rate,
+            None => 0.0
+        }
+        };
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let sink = Sink::try_new(&stream_handle).unwrap();
+        loop {
+            // Receive the next set of audio samples from the channel
+            let audio_samples = receiver.recv().unwrap();
+            unsafe { play_audio(&sink, audio_samples, sample_rate as u32); }
+        }
+    });
+```
+
+Now we should be able to support more cores in the future!
 
 
-# Step ? - Game Controller support
+# Step 25 - Game Controller support
+
+Lets add the `gilrs` cargo to our rust project:
+
+```rust
+cargo add gilrs
+```
+
+And import it at the top of our file:
+
+```rust
+use gilrs::{Gilrs, Button, Event};
+```
+
+
+Similaer to how we did the keyboard input mapping from `minifb` we need to create a map from the `gilrs::Button` to the libRetro button id, as this code will be quite long lets put it in its own function:
+
+```rust
+fn setup_joypad_device_map() -> HashMap<Button, usize> {
+    return HashMap::from([
+        (
+            Button::South,
+            libretro_sys::DEVICE_ID_JOYPAD_A as usize,
+        ),
+        (
+            Button::East,
+            libretro_sys::DEVICE_ID_JOYPAD_B as usize,
+        ),
+        (
+            Button::West,
+            libretro_sys::DEVICE_ID_JOYPAD_X as usize,
+        ),
+        (
+            Button::North,
+            libretro_sys::DEVICE_ID_JOYPAD_Y as usize,
+        ),
+        (
+            Button::LeftTrigger,
+            libretro_sys::DEVICE_ID_JOYPAD_L as usize,
+        ),
+        (
+            Button::LeftTrigger2,
+            libretro_sys::DEVICE_ID_JOYPAD_L2 as usize,
+        ),
+        (
+            Button::RightTrigger,
+            libretro_sys::DEVICE_ID_JOYPAD_R as usize,
+        ),
+        (
+            Button::RightTrigger2,
+            libretro_sys::DEVICE_ID_JOYPAD_R2 as usize,
+        ),
+        (
+            Button::DPadDown,        
+            libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize,
+        ),
+        (
+            Button::DPadUp,
+            libretro_sys::DEVICE_ID_JOYPAD_UP as usize,
+        ),
+        (
+            Button::DPadRight,
+            libretro_sys::DEVICE_ID_JOYPAD_RIGHT as usize,
+        ),
+        (
+            Button::DPadLeft,
+            libretro_sys::DEVICE_ID_JOYPAD_LEFT as usize,
+        ),
+        (
+            Button::Start,
+            libretro_sys::DEVICE_ID_JOYPAD_START as usize,
+        ),
+        (
+            Button::Select,
+            libretro_sys::DEVICE_ID_JOYPAD_SELECT as usize,
+        ),
+    ]);
+}
+```
+
+We now need to call this function under where we setup the keyboard mapping like so:
+
+```rust
+let joypad_device_map = setup_joypad_device_map();
+```
+
+
+Now before the code to load the libRetro lets do some initialisation that is required for `gilrs`:
+
+```rust
+println!("Gamepad Setup");
+    let mut gilrs = Gilrs::new().unwrap();
+    let mut active_gamepad = None;
+```
+
+This code should only be executed once as it creates the Gilrs object and creates a variable that will store the active gamepad. We need this variable as multiple gamepads can be connected and we need to know which one to poll for input.
+
+Now in the main game loop we need to listen for events to see which gamepad is currently being used by the user:
+
+```rust
+
+        // Gamepad input Handling
+        // Examine new events to check which gamepad is currently being used
+        while let Some(Event { id, event, time }) = gilrs.next_event() {
+            // println!("{:?} New event from {}: {:?}", time, id, event);
+            active_gamepad = Some(id);
+        }
+```
+
+Just after this code we can use that active_gamepad variable to check if any buttons are pressed on that controller:
+
+```rust
+        // Now Lets check what buttons are pressed and map them to the libRetro buttons
+        if let Some(gamepad) = active_gamepad.map(|id| gilrs.gamepad(id)) {
+            for button in [Button::South, Button::North, Button::East, Button::West, Button::Start, Button::Select, Button::DPadDown, Button::DPadUp, Button::DPadLeft, Button::DPadRight, Button::LeftTrigger, Button::LeftTrigger2, Button::RightTrigger, Button::RightTrigger2] {
+                if gamepad.is_pressed(button) {
+                    println!("Button Pressed: {:?}", button);
+                    let libretro_button = joypad_device_map.get(&button).unwrap();
+                    this_frames_pressed_buttons[*libretro_button] = 1;
+                }
+            }
+        }
+```
+
+Now if you run the program you will be able to control your Game Boy ROM with a plugged in game controller. However I personally had problems with a few controllers that I own while running this on MacOSX:
+
+* Controller from PS1 Mini - D-pad issues where the only d-pad button that works is RIGHT, it thinks DOWN is up and UP/LEFT don't do anything.
+* RetroBit Sega Saturn Controller - Same issues as above
+
+I am not sure if its the `gilrs` library or a MacOSX issue, or it could be my controllers.
+
+I will need to test on other platforms and with other controllers to figure out what is going wrong. I tried in RetroArch but it didn't auto-detect these controllers, but I could go into settings to configure them manually and the D-pad was fine.
+
+>  Size of executable is now 1.8MB due to the added Gilrs cargo
