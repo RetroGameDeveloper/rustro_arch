@@ -2205,3 +2205,43 @@ I am not sure if its the `gilrs` library or a MacOSX issue, or it could be my co
 I will need to test on other platforms and with other controllers to figure out what is going wrong. I tried in RetroArch but it didn't auto-detect these controllers, but I could go into settings to configure them manually and the D-pad was fine.
 
 >  Size of executable is now 1.8MB due to the added Gilrs cargo
+
+# Step 26 - Supporting more cores
+
+We have all the required functionality for playing Game Boy games now but we aren't really a LibRetro frontend if we only support one core, so lets start implementing some setting that will enable more libRetro cores to run in our frontend.
+
+
+Fiest of all we need to refactor the core setup a little so we can get the requires FPS that the core want to run at, otherwise the core will either run too fast or too slow on our frontend. We can do this using the `av_info` object we got from the core earlier:
+
+```rust
+let mut av_info = SystemAvInfo {
+        geometry: GameGeometry {
+            base_width: 0,
+            base_height: 0,
+            max_width: 0,
+            max_height: 0,
+            aspect_ratio: 0.0,
+        },
+        timing: SystemTiming {
+            fps: 0.0,
+            sample_rate: 0.0,
+        },
+    };
+    unsafe {
+        println!("Setting up Core");
+        core_api = load_core(&CURRENT_EMULATOR_STATE.core_name);
+        (core_api.retro_init)();
+        (core_api.retro_get_system_av_info)(&mut av_info);
+        println!("AV Info: {:?}", &av_info);
+        CURRENT_EMULATOR_STATE.av_info = Some(av_info.clone());
+        println!("About to load ROM: {}", CURRENT_EMULATOR_STATE.rom_name);
+        load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
+    }
+
+    let fps = av_info.timing.fps as u64;
+    window.limit_update_rate(Some(std::time::Duration::from_micros(1000000/fps)));
+```
+
+
+
+# Step ? - Cheating

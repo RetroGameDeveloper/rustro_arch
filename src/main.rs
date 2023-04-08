@@ -640,31 +640,32 @@ fn main() {
     let mut gilrs = Gilrs::new().unwrap();
     let mut active_gamepad = None;
 
+    let mut av_info = SystemAvInfo {
+        geometry: GameGeometry {
+            base_width: 0,
+            base_height: 0,
+            max_width: 0,
+            max_height: 0,
+            aspect_ratio: 0.0,
+        },
+        timing: SystemTiming {
+            fps: 0.0,
+            sample_rate: 0.0,
+        },
+    };
     unsafe {
         println!("Setting up Core");
         core_api = load_core(&CURRENT_EMULATOR_STATE.core_name);
         (core_api.retro_init)();
-        let mut av_info = SystemAvInfo {
-            geometry: GameGeometry {
-                base_width: 0,
-                base_height: 0,
-                max_width: 0,
-                max_height: 0,
-                aspect_ratio: 0.0,
-            },
-            timing: SystemTiming {
-                fps: 0.0,
-                sample_rate: 0.0,
-            },
-        };
         (core_api.retro_get_system_av_info)(&mut av_info);
         println!("AV Info: {:?}", &av_info);
-        CURRENT_EMULATOR_STATE.av_info = Some(av_info);
+        CURRENT_EMULATOR_STATE.av_info = Some(av_info.clone());
         println!("About to load ROM: {}", CURRENT_EMULATOR_STATE.rom_name);
         load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
     }
 
-    window.limit_update_rate(Some(std::time::Duration::from_micros(16600))); // Limit to ~60fps
+    let fps = av_info.timing.fps as u64;
+    window.limit_update_rate(Some(std::time::Duration::from_micros(1000000/fps)));
     while window.is_open() && !window.is_key_down(Key::Escape) {
         // Call the libRetro core every frame
         unsafe {
