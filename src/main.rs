@@ -536,6 +536,7 @@ fn main() {
         ),
     ]);
 
+    println!("Setting up minifb window");
     let mut window =
         Window::new("RustroArch", 640, 480, WindowOptions::default()).unwrap_or_else(|e| {
             panic!("{}", e);
@@ -545,14 +546,14 @@ fn main() {
     let mut fps_counter = 0;
     let core_api;
 
-    // Audio Setup
-    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-
+    println!("Setting up Audio Thread");
     // Create a channel for passing audio samples from the main thread to the audio thread
     let (sender, receiver) = channel();
-
+    
     // Spawn a new thread to play back audio
     let audio_thread = thread::spawn(move || {
+        println!("Audio Thread Started");
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&stream_handle).unwrap();
         loop {
             // Receive the next set of audio samples from the channel
@@ -562,6 +563,7 @@ fn main() {
     });
 
     unsafe {
+        println!("Setting up Core");
         core_api = load_core(&CURRENT_EMULATOR_STATE.core_name);
         (core_api.retro_init)();
         let mut av_info = SystemAvInfo {
