@@ -7,7 +7,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        rust: [stable, 1.64]
         os: [ubuntu-latest, macOS-latest, windows-latest]
+        include:
+          - os: macOS-latest
+            features: portaudio_backend,rodio_backend,dbus_keyring
+          - os: ubuntu-latest
+            features: alsa_backend,rodio_backend,dbus_keyring,dbus_mpris
     steps:
     - uses: actions/checkout@v3
     - name: Build for ${{ matrix.os }}
