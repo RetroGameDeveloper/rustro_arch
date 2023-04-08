@@ -2211,7 +2211,7 @@ I will need to test on other platforms and with other controllers to figure out 
 We have all the required functionality for playing Game Boy games now but we aren't really a LibRetro frontend if we only support one core, so lets start implementing some setting that will enable more libRetro cores to run in our frontend.
 
 
-Fiest of all we need to refactor the core setup a little so we can get the requires FPS that the core want to run at, otherwise the core will either run too fast or too slow on our frontend. We can do this using the `av_info` object we got from the core earlier:
+First of all we need to refactor the core setup a little so we can get the requires FPS that the core want to run at, otherwise the core will either run too fast or too slow on our frontend. We can do this using the `av_info` object we got from the core earlier:
 
 ```rust
 let mut av_info = SystemAvInfo {
@@ -2242,6 +2242,40 @@ let mut av_info = SystemAvInfo {
     window.limit_update_rate(Some(std::time::Duration::from_micros(1000000/fps)));
 ```
 
+
+
+We could try another emulator core but first lets try a standalong core, you can download the 2048 core from [LibRetro Nightly](https://buildbot.libretro.com/nightly/apple/osx/x86_64/latest/) and since we are going to be testing a bunch of different cores lets put them all in a ./cores directory. 
+
+We can now run 2048 with the following command:
+
+```rust
+cargo build --release && ./target/release/rustro_arch Tetris.gb -L ./cores/2048_libretro.dylib # Change the .dylib to .dll on windows and .so on Linux
+```
+
+Note that we still pass the GameBoy ROM in as our parameter parsing gives an error if it is not there.
+
+When you run you will notice that something has gone horribly wrong:
+
+![2048 with wrong Piel Format](./screenshots/2048_Wrong_PixelFormat.jpeg)
+
+This is caused by us presuming the Pixel Format is `RGB565` which it was in GamBatte, but the `2048` core uses `ARGB8888` which is the same as `minifb` uses so no conversion is nessecary, so lets stop auto converting the frame buffer to `RBG565` by modifying the code inside the `libretro_set_video_refresh_callback` function like so:
+
+```rust
+let result = match CURRENT_EMULATOR_STATE.pixel_format {
+        PixelFormat::RGB565 => Vec::from(convert_pixel_array_from_rgb565_to_xrgb8888(buffer_slice)),
+        PixelFormat::ARGB8888 => std::slice::from_raw_parts(buffer_slice.as_ptr() as *const u32, buffer_slice.len()).to_vec(),
+        _ => panic!("Unknown Pixel Format {:?}", CURRENT_EMULATOR_STATE.pixel_format)
+    };
+
+    // Create a Vec<u8> from the slice
+
+    // Wrap the Vec<u8> in an Option and assign it to the frame_buffer field
+    CURRENT_EMULATOR_STATE.frame_buffer = Some(result);
+```
+
+If you run the code it will provide a much more reasonable interface:
+
+![2048 Working](./screenshots/2048_working.jpeg)
 
 
 # Step ? - Cheating

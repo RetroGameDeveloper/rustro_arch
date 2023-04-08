@@ -129,13 +129,16 @@ unsafe extern "C" fn libretro_set_video_refresh_callback(
         frame_buffer_data as *const u8,
         length_of_frame_buffer as usize,
     );
-    let result = convert_pixel_array_from_rgb565_to_xrgb8888(buffer_slice);
+    let result = match CURRENT_EMULATOR_STATE.pixel_format {
+        PixelFormat::RGB565 => Vec::from(convert_pixel_array_from_rgb565_to_xrgb8888(buffer_slice)),
+        PixelFormat::ARGB8888 => std::slice::from_raw_parts(buffer_slice.as_ptr() as *const u32, buffer_slice.len()).to_vec(),
+        _ => panic!("Unknown Pixel Format {:?}", CURRENT_EMULATOR_STATE.pixel_format)
+    };
 
     // Create a Vec<u8> from the slice
-    let buffer_vec = Vec::from(result);
 
-    // Wrap the Vec<u8> in an Some Option and assign it to the frame_buffer field
-    CURRENT_EMULATOR_STATE.frame_buffer = Some(buffer_vec);
+    // Wrap the Vec<u8> in an Option and assign it to the frame_buffer field
+    CURRENT_EMULATOR_STATE.frame_buffer = Some(result);
     CURRENT_EMULATOR_STATE.screen_height = height;
     CURRENT_EMULATOR_STATE.screen_width = width;
     CURRENT_EMULATOR_STATE.screen_pitch = pitch as u32;
@@ -758,6 +761,7 @@ fn main() {
                     if slice_of_pixel_buffer.len() < width * height * 4 {
                         // The frame buffer isn't big enough so lets add additional pixels just so we can display it
                         let mut vec: Vec<u32> = slice_of_pixel_buffer.to_vec();
+                        println!("Frame Buffer wasn't big enough");
                         vec.resize((width * height * 4) as usize, 0x0000FFFF); // Add any missing pixels with colour blue
                         window.update_with_buffer(&vec, width, height).unwrap();
                     } else {
