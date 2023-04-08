@@ -11,10 +11,16 @@ jobs:
         os: [ubuntu-latest, macOS-latest, windows-latest]
         include:
           - os: macOS-latest
-            features: portaudio_backend,rodio_backend,dbus_keyring
           - os: ubuntu-latest
-            features: alsa_backend,rodio_backend,dbus_keyring,dbus_mpris
     steps:
+    - name: Installing macOS dependencies
+      if: matrix.os == 'macos-latest'
+      run: brew install pkg-config portaudio
+    - name: Installing needed Ubuntu dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+          sudo apt-get update
+          sudo apt-get install -y -qq libasound2-dev libssl-dev libpulse-dev libdbus-1-dev
     - uses: actions/checkout@v3
     - name: Build for ${{ matrix.os }}
       run: cargo build --release
