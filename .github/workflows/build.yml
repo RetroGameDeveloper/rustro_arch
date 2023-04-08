@@ -1,5 +1,7 @@
 name: Build
-on: [push, pull_request]
+on:
+  push:
+    branches: [ "main" ]
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -7,15 +9,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macOS-latest, windows-latest]
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Rust
-      uses: actions/setup-rust@v1
-      with:
-        rust-version: stable
+    - uses: actions/checkout@v3
     - name: Build for ${{ matrix.os }}
       run: cargo build --release
     - name: Archive artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3.1.2
       with:
         name: build-artifacts
         path: target/release/rustro_arch
+env:
+  CARGO_TERM_COLOR: always
