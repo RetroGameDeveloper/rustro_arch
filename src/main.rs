@@ -3,16 +3,16 @@ extern crate libloading;
 use clap::{App, Arg};
 
 use libloading::Library;
-use libretro_sys::{CoreAPI, GameInfo, PixelFormat, SystemAvInfo, GameGeometry, SystemTiming};
+use libretro_sys::{CoreAPI, GameInfo, PixelFormat, SystemAvInfo, GameGeometry, SystemTiming, LogCallback, LogLevel};
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use std::collections::HashMap;
-use std::ffi::{c_void, CString};
+use std::ffi::{c_void, CString, CStr};
 use std::fs::File;
 use std::io::Read;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use std::{env, fs, ptr}; // Add this line to import the Read trait
+use std::{env, fs, ptr, mem}; // Add this line to import the Read trait
 use rodio::{Sink, OutputStream, OutputStreamHandle};
 use rodio::buffer::SamplesBuffer;
 use std::sync::mpsc::{channel, Sender};
@@ -22,6 +22,8 @@ use gilrs::{Gilrs, Button, Event};
 
 
 const EXPECTED_LIB_RETRO_VERSION: u32 = 1;
+
+const audio_enable: bool = false;
 
 struct EmulatorState {
     rom_name: String,
@@ -35,7 +37,9 @@ struct EmulatorState {
     screen_height: u32,
     buttons_pressed: Option<Vec<i16>>,
     current_save_slot: u8,
-    av_info: Option<SystemAvInfo>
+    av_info: Option<SystemAvInfo>,
+    game_info: Option<GameInfo>,
+    game_info_ext: Option<GameInfoExt>,
 }
 
 static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
@@ -50,9 +54,51 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     screen_height: 0,
     buttons_pressed: None,
     current_save_slot: 0,
-    av_info: None
+    av_info: None,
+    game_info: None,
+    game_info_ext: None,
 };
 
+// retro_game_info_ext wasn't in libretro-sys package so declaring it here
+pub struct GameInfoExt {
+    pub full_path: *const libc::c_char,
+    pub archive_path: *const libc::c_char,
+    pub archive_file: *const libc::c_char,
+    pub dir: *const libc::c_char,
+    pub name: *const libc::c_char,
+    pub ext: *const libc::c_char,
+    pub meta: *const libc::c_char,
+    pub data: *const libc::c_void,
+    /* Size of game content memory buffer, in bytes */
+    pub size: libc::size_t,
+    pub file_in_archive: bool,
+    pub persistent_data: bool,
+}
+
+////////////////////////
+// Utility FUnctions
+////////////////////////
+
+// Convert the input String to a CString, but be-careful with memory management when sending this to a core..
+fn convert_to_cstring(input: String) -> CString {
+    CString::new(input).expect("Failed to convert to CString")
+}
+
+// print_c_string simply takes in a Cstring(libc::c_char pointer) and prints it to the console
+fn print_c_string(c_string_ptr: *const libc::c_char) {
+    unsafe {
+        if !c_string_ptr.is_null() {
+            let c_str = CStr::from_ptr(c_string_ptr);
+            if let Ok(rust_string) = c_str.to_str() {
+                println!("{}", rust_string);
+            }
+        }
+    }
+}
+
+///////////////////////
+// Config Functions
+///////////////////////
 fn get_retroarch_config_path() -> PathBuf {
     return match std::env::consts::OS {
         "windows" => PathBuf::from(env::var("APPDATA").ok().unwrap()).join("retroarch"),
@@ -79,6 +125,7 @@ fn parse_retroarch_config(config_file: &Path) -> Result<HashMap<String, String>,
 }
 
 fn convert_pixel_array_from_rgb565_to_xrgb8888(color_array: &[u8]) -> Box<[u32]> {
+    println!("convert_pixel_array_from_rgb565_to_xrgb8888");
     let bytes_per_pixel = 2;
     assert_eq!(
         color_array.len() % bytes_per_pixel,
@@ -119,33 +166,40 @@ unsafe extern "C" fn libretro_set_video_refresh_callback(
     height: libc::c_uint,
     pitch: libc::size_t,
 ) {
+    println!("libretro_set_video_refresh_callback width: {} height: {} pitch: {}", width, height, pitch);
     if (frame_buffer_data == ptr::null()) {
         println!("frame_buffer_data was null");
         return;
     }
     let length_of_frame_buffer =
         ((pitch as u32) * height) * CURRENT_EMULATOR_STATE.bytes_per_pixel as u32;
+        println!("length_of_frame_buffer: {}", length_of_frame_buffer);
     let buffer_slice = std::slice::from_raw_parts(
         frame_buffer_data as *const u8,
         length_of_frame_buffer as usize,
     );
+    println!("got buffer_slice");
     let result = match CURRENT_EMULATOR_STATE.pixel_format {
         PixelFormat::RGB565 => Vec::from(convert_pixel_array_from_rgb565_to_xrgb8888(buffer_slice)),
-        PixelFormat::ARGB8888 => std::slice::from_raw_parts(buffer_slice.as_ptr() as *const u32, buffer_slice.len()).to_vec(),
+        PixelFormat::ARGB8888 => {
+            println!("ARGB8888 len:{} w*h*p: {}",  buffer_slice.len(), width * height);
+            // std::slice::from_raw_parts(buffer_slice.as_ptr() as *const u32, buffer_slice.len()).to_vec() // original code doesn't work in nestopia
+            std::slice::from_raw_parts(buffer_slice.as_ptr() as *const u32, buffer_slice.len()/4).to_vec() // dividing by 4 here seems to fix nestopia for some reason
+        },
         _ => panic!("Unknown Pixel Format {:?}", CURRENT_EMULATOR_STATE.pixel_format)
     };
-
-    // Create a Vec<u8> from the slice
+    println!("Middle of libretro_set_video_refresh_callback");
 
     // Wrap the Vec<u8> in an Option and assign it to the frame_buffer field
     CURRENT_EMULATOR_STATE.frame_buffer = Some(result);
     CURRENT_EMULATOR_STATE.screen_height = height;
     CURRENT_EMULATOR_STATE.screen_width = width;
     CURRENT_EMULATOR_STATE.screen_pitch = pitch as u32;
+    println!("End of libretro_set_video_refresh_callback")
 }
 
 unsafe extern "C" fn libretro_set_input_poll_callback() {
-    // println!("libretro_set_input_poll_callback")
+    println!("libretro_set_input_poll_callback")
 }
 
 unsafe extern "C" fn libretro_set_input_state_callback(
@@ -177,7 +231,13 @@ unsafe extern "C" fn libretro_set_audio_sample_batch_callback(
     return frames;
 }
 
+unsafe extern "C" fn libretro_log_print_callback(level: LogLevel, fmt: *const libc::c_char) {
+    print!("{:?}: ", level);
+    print_c_string(fmt);
+}
+
 unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
+    println!("libretro_environment_callback command:{}", command);
     return match command {
         libretro_sys::ENVIRONMENT_GET_CAN_DUPE => {
             *(return_data as *mut bool) = true; // Set the return_data to the value true
@@ -222,8 +282,181 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *m
             true
         }
         libretro_sys::ENVIRONMENT_GET_VARIABLE_UPDATE => {
+            println!("INFO: Ignoring ENVIRONMENT_GET_VARIABLE_UPDATE");
             // Return true when we have changed variables that the core needs to know about, but we don't change anything yet
             false
+        }
+        // All the GETs not currently supported
+        libretro_sys::ENVIRONMENT_GET_CAMERA_INTERFACE => {
+            println!("TODO: Handle ENVIRONMENT_GET_CAMERA_INTERFACE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY => {
+            println!("TODO: Handle ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER => {
+            println!("TODO: Handle ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_HW_RENDER_INTERFACE => {
+            println!("TODO: Handle ENVIRONMENT_GET_HW_RENDER_INTERFACE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES => {
+            println!("TODO: Handle ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_LANGUAGE => {
+            println!("TODO: Handle ENVIRONMENT_GET_LANGUAGE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_LIBRETRO_PATH => {
+            println!("TODO: Handle ENVIRONMENT_GET_LIBRETRO_PATH");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_LOCATION_INTERFACE => {
+            println!("TODO: Handle ENVIRONMENT_GET_LOCATION_INTERFACE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_LOG_INTERFACE => {
+            println!("TODO: Handle ENVIRONMENT_GET_LOG_INTERFACE");
+            (*(return_data as *mut LogCallback)).log = libretro_log_print_callback;
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_OVERSCAN => {
+            println!("TODO: Handle ENVIRONMENT_GET_OVERSCAN");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_PERF_INTERFACE => {
+            println!("TODO: Handle ENVIRONMENT_GET_PERF_INTERFACE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_RUMBLE_INTERFACE => {
+            println!("TODO: Handle ENVIRONMENT_GET_RUMBLE_INTERFACE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_SAVE_DIRECTORY => {
+            println!("TODO: Handle ENVIRONMENT_GET_SAVE_DIRECTORY");
+            *(return_data as *mut CString) = convert_to_cstring(CURRENT_EMULATOR_STATE.rom_name.clone());  // TODO use Cstring
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_SENSOR_INTERFACE => {
+            println!("TODO: Handle ENVIRONMENT_GET_SENSOR_INTERFACE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+            println!("TODO: Handle ENVIRONMENT_GET_SYSTEM_DIRECTORY");
+            println!("Rom name: {:?}", CURRENT_EMULATOR_STATE.rom_name);
+            println!("Pointer: {:?}", CURRENT_EMULATOR_STATE.rom_name.as_ptr());
+           
+            // *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8;  // TODO use CString otherwise this will segfault
+            *(return_data as *mut *const libc::c_char) = CString::new("").unwrap().as_ptr() as *const i8;  // TODO use CString otherwise this will segfault
+            println!("return_data: {:?}", return_data);
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_USERNAME => {
+            println!("TODO: Handle ENVIRONMENT_GET_USERNAME");
+            true
+        }
+        libretro_sys::ENVIRONMENT_GET_VARIABLE => {
+            println!("TODO: Handle ENVIRONMENT_GET_VARIABLE command: {}", command); // 15
+            false
+        }
+        // Rest of the SET_
+        libretro_sys::ENVIRONMENT_SET_DISK_CONTROL_INTERFACE=> {
+            println!("TODO: Handle ENVIRONMENT_SET_DISK_CONTROL_INTERFACE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_FRAME_TIME_CALLBACK=> {
+            println!("TODO: Handle ENVIRONMENT_SET_FRAME_TIME_CALLBACK");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_GEOMETRY=> {
+            println!("TODO: Handle ENVIRONMENT_SET_GEOMETRY");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_HW_RENDER=> {
+            println!("TODO: Handle ENVIRONMENT_SET_HW_RENDER");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_INPUT_DESCRIPTORS=> {
+            println!("TODO: Handle ENVIRONMENT_SET_INPUT_DESCRIPTORS");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_KEYBOARD_CALLBACK=> {
+            println!("TODO: Handle ENVIRONMENT_SET_KEYBOARD_CALLBACK");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_MESSAGE=> {
+            println!("TODO: Handle ENVIRONMENT_SET_MESSAGE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_PERFORMANCE_LEVEL=> {
+            println!("TODO: Handle ENVIRONMENT_SET_PERFORMANCE_LEVEL");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_PROC_ADDRESS_CALLBACK=> {
+            println!("TODO: Handle ENVIRONMENT_SET_PROC_ADDRESS_CALLBACK");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_ROTATION=> {
+            println!("TODO: Handle ENVIRONMENT_SET_ROTATION");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_SUBSYSTEM_INFO=> {
+            println!("TODO: Handle ENVIRONMENT_SET_SUBSYSTEM_INFO");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_SUPPORT_NO_GAME=> {
+            println!("TODO: Handle ENVIRONMENT_SET_SUPPORT_NO_GAME");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_SYSTEM_AV_INFO=> {
+            println!("TODO: Handle ENVIRONMENT_SET_SYSTEM_AV_INFO");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SET_VARIABLES=> {
+            println!("TODO: Handle ENVIRONMENT_SET_VARIABLES");
+            true
+        }
+        libretro_sys::ENVIRONMENT_EXPERIMENTAL => {
+            println!("TODO: Handle ENVIRONMENT_EXPERIMENTAL");
+            true
+        }
+        libretro_sys::ENVIRONMENT_PRIVATE => {
+            println!("TODO: Handle ENVIRONMENT_PRIVATE");
+            true
+        }
+        libretro_sys::ENVIRONMENT_SHUTDOWN => {
+            println!("TODO: Handle ENVIRONMENT_SHUTDOWN");
+            true
+        }
+        55 => {
+            println!("TODO: Handle RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY");
+            false
+        }
+        66 => {
+            // TODO: need to return retro_game_info_ext retro_game_info_ext
+            println!("TODO: Handle ENVIRONMENT_GET_GAME_INFO_EXT");
+            let game_info = CURRENT_EMULATOR_STATE.game_info.clone().unwrap_unchecked();
+    
+            let data = (return_data as *mut GameInfoExt);
+            (*(return_data as *mut GameInfoExt)).full_path = CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8;
+            (*(return_data as *mut GameInfoExt)).archive_path = ptr::null();
+            (*(return_data as *mut GameInfoExt)).archive_file = ptr::null();
+            (*(return_data as *mut GameInfoExt)).ext = CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8;
+            (*(return_data as *mut GameInfoExt)).meta = ptr::null();
+            (*(return_data as *mut GameInfoExt)).dir = CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8; // TODO: Convert to Cstring
+            (*(return_data as *mut GameInfoExt)).name = CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8; // TODO: Convert to Cstring
+            (*(return_data as *mut GameInfoExt)).file_in_archive = false;
+            (*(return_data as *mut GameInfoExt)).persistent_data = true;
+            (*(return_data as *mut GameInfoExt)).size = CURRENT_EMULATOR_STATE.game_info.as_ref().unwrap().size;
+            (*(return_data as *mut GameInfoExt)).data = CURRENT_EMULATOR_STATE.game_info.as_ref().unwrap().data;
+            println!("Data size {}",  (*(return_data as *mut GameInfoExt)).size);
+
+
+            true
         }
         _ => {
             println!(
@@ -364,6 +597,7 @@ unsafe fn parse_command_line_arguments() {
 }
 
 unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
+    println!("Loading ROM file: {:?}", rom_name);
     let rom_name_cptr = CString::new(rom_name.clone())
         .expect("Failed to create CString")
         .as_ptr();
@@ -375,6 +609,9 @@ unsafe fn load_rom_file(core_api: &CoreAPI, rom_name: &String) -> bool {
         size: contents.len(),
         meta: ptr::null(),
     };
+    CURRENT_EMULATOR_STATE.game_info = Some(game_info.clone());
+
+    println!("INFO: Calling retro_load_game in Core");
     let was_load_successful = (core_api.retro_load_game)(&game_info);
     if (!was_load_successful) {
         panic!("Rom Load was not successful");
@@ -395,6 +632,9 @@ unsafe fn send_audio_to_thread(sender: &Sender<&Vec<i16>>) {
 }
 
 unsafe fn play_audio( sink: &Sink, audio_samples: &Vec<i16>, sample_rate: u32) {
+    if !audio_enable {
+        return;
+    }
     if sink.empty() {
         let audio_slice = std::slice::from_raw_parts(audio_samples.as_ptr() as *const i16, audio_samples.len());
         let source = SamplesBuffer::new(2, sample_rate, audio_slice);
@@ -623,21 +863,23 @@ fn main() {
     let (sender, receiver) = channel();
     
     // Spawn a new thread to play back audio
-    let audio_thread = thread::spawn(move || {
-        println!("Audio Thread Started");
-        let sample_rate = unsafe { match &CURRENT_EMULATOR_STATE.av_info {
-            Some(av_info) => av_info.timing.sample_rate,
-            None => 0.0
-        }
-        };
-        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-        let sink = Sink::try_new(&stream_handle).unwrap();
-        loop {
-            // Receive the next set of audio samples from the channel
-            let audio_samples = receiver.recv().unwrap();
-            unsafe { play_audio(&sink, audio_samples, sample_rate as u32); }
-        }
-    });
+    if (audio_enable) {
+        let audio_thread = thread::spawn(move || {
+            println!("Audio Thread Started");
+            let sample_rate = unsafe { match &CURRENT_EMULATOR_STATE.av_info {
+                Some(av_info) => av_info.timing.sample_rate,
+                None => 0.0
+            }
+            };
+            let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+            let sink = Sink::try_new(&stream_handle).unwrap();
+            loop {
+                // Receive the next set of audio samples from the channel
+                let audio_samples = receiver.recv().unwrap();
+                unsafe { play_audio(&sink, audio_samples, sample_rate as u32); }
+            }
+        });
+    }
 
     println!("Gamepad Setup");
     let mut gilrs = Gilrs::new().unwrap();
@@ -663,7 +905,7 @@ fn main() {
         (core_api.retro_get_system_av_info)(&mut av_info);
         println!("AV Info: {:?}", &av_info);
         CURRENT_EMULATOR_STATE.av_info = Some(av_info.clone());
-        println!("About to load ROM: {}", CURRENT_EMULATOR_STATE.rom_name);
+        println!("About to load ROM: {:?}", CURRENT_EMULATOR_STATE.rom_name);
         load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
     }
 
@@ -761,7 +1003,7 @@ fn main() {
                     if slice_of_pixel_buffer.len() < width * height * 4 {
                         // The frame buffer isn't big enough so lets add additional pixels just so we can display it
                         let mut vec: Vec<u32> = slice_of_pixel_buffer.to_vec();
-                        println!("Frame Buffer wasn't big enough");
+                        // println!("Frame Buffer wasn't big enough");
                         vec.resize((width * height * 4) as usize, 0x0000FFFF); // Add any missing pixels with colour blue
                         window.update_with_buffer(&vec, width, height).unwrap();
                     } else {

@@ -2070,7 +2070,7 @@ let audio_thread = thread::spawn(move || {
 
 Now we should be able to support more cores in the future!
 
-
+---
 # Step 25 - Game Controller support
 
 Lets add the `gilrs` cargo to our rust project:
@@ -2084,7 +2084,6 @@ And import it at the top of our file:
 ```rust
 use gilrs::{Gilrs, Button, Event};
 ```
-
 
 Similaer to how we did the keyboard input mapping from `minifb` we need to create a map from the `gilrs::Button` to the libRetro button id, as this code will be quite long lets put it in its own function:
 
@@ -2124,7 +2123,7 @@ fn setup_joypad_device_map() -> HashMap<Button, usize> {
             libretro_sys::DEVICE_ID_JOYPAD_R2 as usize,
         ),
         (
-            Button::DPadDown,        
+            Button::DPadDown,    
             libretro_sys::DEVICE_ID_JOYPAD_DOWN as usize,
         ),
         (
@@ -2156,7 +2155,6 @@ We now need to call this function under where we setup the keyboard mapping like
 ```rust
 let joypad_device_map = setup_joypad_device_map();
 ```
-
 
 Now before the code to load the libRetro lets do some initialisation that is required for `gilrs`:
 
@@ -2204,14 +2202,14 @@ I am not sure if its the `gilrs` library or a MacOSX issue, or it could be my co
 
 I will need to test on other platforms and with other controllers to figure out what is going wrong. I tried in RetroArch but it didn't auto-detect these controllers, but I could go into settings to configure them manually and the D-pad was fine.
 
->  Size of executable is now 1.8MB due to the added Gilrs cargo
+> Size of executable is now 1.8MB due to the added Gilrs cargo
 
+---
 # Step 26 - Supporting more cores
 
 We have all the required functionality for playing Game Boy games now but we aren't really a LibRetro frontend if we only support one core, so lets start implementing some setting that will enable more libRetro cores to run in our frontend.
 
-
-First of all we need to refactor the core setup a little so we can get the requires FPS that the core want to run at, otherwise the core will either run too fast or too slow on our frontend. We can do this using the `av_info` object we got from the core earlier:
+First of all we need to refactor the core setup a little so we can get the required Frames Per Second that the core want to run at, otherwise the core will either run too fast or too slow on our frontend. We can do this using the `av_info` object we got from the core earlier:
 
 ```rust
 let mut av_info = SystemAvInfo {
@@ -2242,9 +2240,7 @@ let mut av_info = SystemAvInfo {
     window.limit_update_rate(Some(std::time::Duration::from_micros(1000000/fps)));
 ```
 
-
-
-We could try another emulator core but first lets try a standalong core, you can download the 2048 core from [LibRetro Nightly](https://buildbot.libretro.com/nightly/apple/osx/x86_64/latest/) and since we are going to be testing a bunch of different cores lets put them all in a ./cores directory. 
+We could try another emulator core but first lets try a standalong core, you can download the 2048 core from [LibRetro Nightly](https://buildbot.libretro.com/nightly/apple/osx/x86_64/latest/) and since we are going to be testing a bunch of different cores lets put them all in a ./cores directory.
 
 We can now run 2048 with the following command:
 
@@ -2258,7 +2254,7 @@ When you run you will notice that something has gone horribly wrong:
 
 ![2048 with wrong Piel Format](./screenshots/2048_Wrong_PixelFormat.jpeg)
 
-This is caused by us presuming the Pixel Format is `RGB565` which it was in GamBatte, but the `2048` core uses `ARGB8888` which is the same as `minifb` uses so no conversion is nessecary, so lets stop auto converting the frame buffer to `RBG565` by modifying the code inside the `libretro_set_video_refresh_callback` function like so:
+This is caused by us presuming the Pixel Format is `RGB565` which it was in the GamBatte core, but the `2048` core uses `ARGB8888` which is the same as `minifb` uses so no conversion is nessecary, so lets stop auto converting the frame buffer to `RBG565` by modifying the code inside the `libretro_set_video_refresh_callback` function like so:
 
 ```rust
 let result = match CURRENT_EMULATOR_STATE.pixel_format {
@@ -2277,5 +2273,74 @@ If you run the code it will provide a much more reasonable interface:
 
 ![2048 Working](./screenshots/2048_working.jpeg)
 
+---
+# Step 26 - Even More cores
+So a quick run through of the most common emulator cores that we want to support gave the following results:
+* NES - Nestopia - seems work work, but input not working
+* SNES - bsnes - `thread '<unnamed>' panicked at 'assertion failed: sample_rate != 0',``
+* Game Boy - GearBoy - Segfaults
+* Stand Alone - 81 - Segfaults
+* Wasm4 - Throws 7575 bus error
+
+In order to better debug some of these core issues I decided to compile the core myself with the added `-fsanitize=address` compiler flag as this..
+
+I did this by checking out the `libretro-super` mono repository and then going into the core I wanted to build and appending the following to the top of the `Makefile`:
+```
+CXXFLAGS  += -fsanitize=address -g
+CFLAGS  += -fsanitize=address -g
+LDFLAGS  += -fsanitize=address -g
+DEBUG = 1
+```
+
+Now after building and running with the new debug enabled core we get the following much more useful error thrown:
+```
+ERROR: AddressSanitizer: heap-buffer-overflow on address
+```
+
+For Nestopia the offending code was:
+```
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &dir) || !dir)
+      return false;
+
+   sprintf(samp_dir, "%s%cnestopia%csamples", dir, slash, slash);
+```
+After getting the `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY` variable it was creating a string with it, our code to handle this call is the following, but what exactly is wrong with it?
+```
+libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+    println!("TODO: Handle ENVIRONMENT_GET_SYSTEM_DIRECTORY");
+    *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8; 
+    true
+}
+```
+
+
+However when I define a static string TEST at the top level of the file:
+```
+const TEST: &str = "Test";
+```
+and then use it like so:
+```
+
+*(return_data as *mut *const libc::c_char) = TEST.as_ptr() as *const i8; 
+```
+Then it gets past this and segfaults elsewhere, so we definetly have something wrong with how we are passing strings to the core.
+
+I think this is related to the lack of the CString terminator "\0" at the end of the string.
+
+This is why its super important to make all your strings that will be sent to the core "CString" type.
+
+I can't just convert to CString and send to the core as it will be deleted from memory by Rust as soon as the callback function goes out of scope, but the core needs to keep reading it.
+
+So it looks like the main option is to change the `EmulatorState` global to use CString instead of standard Rust String type.
+
+The only problem is it doesn't seem to be possible to have a static initialized CString field in Rust as you cannot call non-const functions, like CString::new, directly inside a static initializer...
+
+Ok so I either want to turn CURRENT_EMULATOR_STATE into a pointer, or change the CString so it is a Optional...
+Which would be better?
+
+---
 
 # Step ? - Cheating
+
+# Step ? - Loading Archives (Zip/7z)
+
