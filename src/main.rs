@@ -40,6 +40,7 @@ struct EmulatorState {
     av_info: Option<SystemAvInfo>,
     game_info: Option<GameInfo>,
     game_info_ext: Option<GameInfoExt>,
+    system_directory: Option<CString>
 }
 
 static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
@@ -57,6 +58,7 @@ static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
     av_info: None,
     game_info: None,
     game_info_ext: None,
+    system_directory: None
 };
 
 // retro_game_info_ext wasn't in libretro-sys package so declaring it here
@@ -236,6 +238,7 @@ unsafe extern "C" fn libretro_log_print_callback(level: LogLevel, fmt: *const li
     print_c_string(fmt);
 }
 
+// NOTE: In the implementation of this function make sure you only send CString's to return_data, otherwise the core will not know when the String ends!
 unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *mut c_void) -> bool {
     println!("libretro_environment_callback command:{}", command);
     return match command {
@@ -338,7 +341,7 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *m
         }
         libretro_sys::ENVIRONMENT_GET_SAVE_DIRECTORY => {
             println!("TODO: Handle ENVIRONMENT_GET_SAVE_DIRECTORY");
-            *(return_data as *mut CString) = convert_to_cstring(CURRENT_EMULATOR_STATE.rom_name.clone());  // TODO use Cstring
+            *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.system_directory.as_ref().unwrap().as_ptr() as *const i8;  // TODO use CString otherwise this will segfault
             true
         }
         libretro_sys::ENVIRONMENT_GET_SENSOR_INTERFACE => {
@@ -350,8 +353,7 @@ unsafe extern "C" fn libretro_environment_callback(command: u32, return_data: *m
             println!("Rom name: {:?}", CURRENT_EMULATOR_STATE.rom_name);
             println!("Pointer: {:?}", CURRENT_EMULATOR_STATE.rom_name.as_ptr());
            
-            // *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8;  // TODO use CString otherwise this will segfault
-            *(return_data as *mut *const libc::c_char) = CString::new("").unwrap().as_ptr() as *const i8;  // TODO use CString otherwise this will segfault
+            *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.system_directory.as_ref().unwrap().as_ptr() as *const i8;
             println!("return_data: {:?}", return_data);
             true
         }
@@ -905,6 +907,9 @@ fn main() {
         (core_api.retro_get_system_av_info)(&mut av_info);
         println!("AV Info: {:?}", &av_info);
         CURRENT_EMULATOR_STATE.av_info = Some(av_info.clone());
+        // Environment variables
+        CURRENT_EMULATOR_STATE.system_directory = Some(CString::new("System").unwrap());
+
         println!("About to load ROM: {:?}", CURRENT_EMULATOR_STATE.rom_name);
         load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
     }

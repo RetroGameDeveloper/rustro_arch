@@ -2338,6 +2338,81 @@ The only problem is it doesn't seem to be possible to have a static initialized 
 Ok so I either want to turn CURRENT_EMULATOR_STATE into a pointer, or change the CString so it is a Optional...
 Which would be better?
 
+Let's first try adding an Optional CString to the static structure we have like so:
+```
+struct EmulatorState {
+    rom_name: String,
+    core_name: String,
+    frame_buffer: Option<Vec<u32>>,
+    audio_data: Option<Vec<i16>>,
+    pixel_format: PixelFormat,
+    bytes_per_pixel: u8, // its only either 2 or 4 bytes per pixel in libretro
+    screen_pitch: u32,
+    screen_width: u32,
+    screen_height: u32,
+    buttons_pressed: Option<Vec<i16>>,
+    current_save_slot: u8,
+    av_info: Option<SystemAvInfo>,
+    game_info: Option<GameInfo>,
+    game_info_ext: Option<GameInfoExt>,
+    system_directory: Option<CString>
+}
+
+static mut CURRENT_EMULATOR_STATE: EmulatorState = EmulatorState {
+    rom_name: String::new(),
+    core_name: String::new(),
+    frame_buffer: None,
+    audio_data: None,
+    pixel_format: PixelFormat::ARGB8888,
+    bytes_per_pixel: 4,
+    screen_pitch: 0,
+    screen_width: 0,
+    screen_height: 0,
+    buttons_pressed: None,
+    current_save_slot: 0,
+    av_info: None,
+    game_info: None,
+    game_info_ext: None,
+    system_directory: None
+};
+```
+
+Now we can set it to a dummy string inside the main function just after initialising the AV info like so:
+```
+CURRENT_EMULATOR_STATE.av_info = Some(av_info.clone());
+// Environment variables
+CURRENT_EMULATOR_STATE.system_directory = Some(CString::new("System").unwrap());
+```
+
+And finally we should be able to pas the value to the core like so:
+```
+libretro_sys::ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
+    println!("TODO: Handle ENVIRONMENT_GET_SYSTEM_DIRECTORY");
+    println!("Rom name: {:?}", CURRENT_EMULATOR_STATE.rom_name);
+    println!("Pointer: {:?}", CURRENT_EMULATOR_STATE.rom_name.as_ptr());
+    
+    *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.system_directory.unwrap().as_ptr() as *const i8;
+    println!("return_data: {:?}", return_data);
+    true
+}
+```
+
+However this gives the following error in the Rust compiler:
+```
+error[E0507]: cannot move out of `CURRENT_EMULATOR_STATE.system_directory` as `CURRENT_EMULATOR_STATE` is a static item
+   --> src/main.rs:357:58
+    |
+357 |             *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.system_directory.unwrap().as_ptr() as *const i8;  // TODO use CString otherwise this will segfault
+    |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ move occurs because `CURRENT_EMULATOR_STATE.system_directory` has type `Option<CString>`, which does not implement the `Copy` trait
+```
+
+So instead we can use `as_ref()` like so:
+```
+            *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE.system_directory.as_ref().unwrap().as_ptr() as *const i8;  // TODO use CString otherwise this will segfault
+```
+
+
+
 ---
 
 # Step ? - Cheating
