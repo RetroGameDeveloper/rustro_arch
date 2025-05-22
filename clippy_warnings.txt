@@ -1,0 +1,430 @@
+    Checking rustro_arch v0.1.0 (/app)
+warning: unused variable: `port`
+   --> src/main.rs:220:5
+    |
+220 |     port: libc::c_uint,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_port`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `device`
+   --> src/main.rs:221:5
+    |
+221 |     device: libc::c_uint,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_device`
+
+warning: unused variable: `index`
+   --> src/main.rs:222:5
+    |
+222 |     index: libc::c_uint,
+    |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_index`
+
+warning: unreachable pattern
+   --> src/main.rs:288:17
+    |
+288 |                 _ => {
+    |                 ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> src/main.rs:288:17
+    |
+270 |                 PixelFormat::ARGB1555 => {
+    |                 --------------------- matches some of the same values
+...
+276 |                 PixelFormat::RGB565 => {
+    |                 ------------------- matches some of the same values
+...
+282 |                 PixelFormat::ARGB8888 => {
+    |                 --------------------- matches some of the same values
+...
+288 |                 _ => {
+    |                 ^ collectively making this unreachable
+    = note: `#[warn(unreachable_patterns)]` on by default
+
+warning: unused variable: `game_info`
+   --> src/main.rs:467:17
+    |
+467 |             let game_info = CURRENT_EMULATOR_STATE.game_info.clone().unwrap_unchecked();
+    |                 ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_game_info`
+
+warning: unused variable: `data`
+   --> src/main.rs:469:17
+    |
+469 |             let data = return_data as *mut GameInfoExt;
+    |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_data`
+
+warning: unused variable: `audio_thread`
+   --> src/main.rs:876:13
+    |
+876 |         let audio_thread = thread::spawn(move || {
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_audio_thread`
+
+warning: unused variable: `event`
+   --> src/main.rs:951:36
+    |
+951 |         while let Some(Event { id, event, time }) = gilrs.next_event() {
+    |                                    ^^^^^ help: try ignoring the field: `event: _`
+
+warning: unused variable: `time`
+   --> src/main.rs:951:43
+    |
+951 |         while let Some(Event { id, event, time }) = gilrs.next_event() {
+    |                                           ^^^^ help: try ignoring the field: `time: _`
+
+warning: field `game_info_ext` is never read
+  --> src/main.rs:43:5
+   |
+29 | struct EmulatorState {
+   |        ------------- field in this struct
+...
+43 |     game_info_ext: Option<GameInfoExt>,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `convert_to_cstring` is never used
+  --> src/main.rs:86:4
+   |
+86 | fn convert_to_cstring(input: String) -> CString {
+   |    ^^^^^^^^^^^^^^^^^^
+
+warning: casting raw pointers to the same type and constness is unnecessary (`*const i8` -> `*const i8`)
+   --> src/main.rs:359:58
+    |
+359 |               *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE
+    |  __________________________________________________________^
+360 | |                 .system_directory
+361 | |                 .as_ref()
+362 | |                 .unwrap()
+363 | |                 .as_ptr() as *const i8; // TODO use CString otherwise this will segfault
+    | |______________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_cast
+    = note: `#[warn(clippy::unnecessary_cast)]` on by default
+help: try
+    |
+359 ~             *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE
+360 +                 .system_directory
+361 +                 .as_ref()
+362 +                 .unwrap()
+363 ~                 .as_ptr(); // TODO use CString otherwise this will segfault
+    |
+
+warning: casting raw pointers to the same type and constness is unnecessary (`*const i8` -> `*const i8`)
+   --> src/main.rs:375:58
+    |
+375 |               *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE
+    |  __________________________________________________________^
+376 | |                 .system_directory
+377 | |                 .as_ref()
+378 | |                 .unwrap()
+379 | |                 .as_ptr() as *const i8;
+    | |______________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_cast
+help: try
+    |
+375 ~             *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE
+376 +                 .system_directory
+377 +                 .as_ref()
+378 +                 .unwrap()
+379 ~                 .as_ptr();
+    |
+
+warning: writing `&Vec` instead of `&[_]` involves a new object where a slice will do
+   --> src/main.rs:660:50
+    |
+660 | unsafe fn play_audio(sink: &Sink, audio_samples: &Vec<i16>, sample_rate: u32) {
+    |                                                  ^^^^^^^^^ help: change this to: `&[i16]`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#ptr_arg
+    = note: `#[warn(clippy::ptr_arg)]` on by default
+
+warning: casting raw pointers to the same type and constness is unnecessary (`*const i16` -> `*const i16`)
+   --> src/main.rs:666:40
+    |
+666 |             std::slice::from_raw_parts(audio_samples.as_ptr() as *const i16, audio_samples.len());
+    |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `audio_samples.as_ptr()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_cast
+
+warning: casting raw pointers to the same type and constness is unnecessary (`*const u32` -> `*const u32`)
+    --> src/main.rs:1032:52
+     |
+1032 |                         std::slice::from_raw_parts(buffer.as_ptr() as *const u32, buffer.len()); // convert to &[u32] slice reference
+     |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `buffer.as_ptr()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_cast
+
+warning: constant `audio_enable` should have an upper case name
+  --> src/main.rs:27:7
+   |
+27 | const audio_enable: bool = false;
+   |       ^^^^^^^^^^^^ help: convert the identifier to upper case: `AUDIO_ENABLE`
+   |
+   = note: `#[warn(non_upper_case_globals)]` on by default
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:202:13
+    |
+202 |             CURRENT_EMULATOR_STATE.pixel_format
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+    = note: `#[warn(static_mut_refs)]` on by default
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:228:11
+    |
+228 |     match &CURRENT_EMULATOR_STATE.buttons_pressed {
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+228 |     match &raw const CURRENT_EMULATOR_STATE.buttons_pressed {
+    |            +++++++++
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:359:58
+    |
+359 |               *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE
+    |  __________________________________________________________^
+360 | |                 .system_directory
+361 | |                 .as_ref()
+    | |_________________________^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:372:40
+    |
+372 |             println!("Rom name: {:?}", CURRENT_EMULATOR_STATE.rom_name);
+    |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:373:39
+    |
+373 |             println!("Pointer: {:?}", CURRENT_EMULATOR_STATE.rom_name.as_ptr());
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:375:58
+    |
+375 |               *(return_data as *mut *const libc::c_char) = CURRENT_EMULATOR_STATE
+    |  __________________________________________________________^
+376 | |                 .system_directory
+377 | |                 .as_ref()
+    | |_________________________^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:467:29
+    |
+467 |             let game_info = CURRENT_EMULATOR_STATE.game_info.clone().unwrap_unchecked();
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:471:17
+    |
+471 |                 CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8;
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:475:17
+    |
+475 |                 CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8;
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:478:17
+    |
+478 |                 CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8; // TODO: Convert to Cstring
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:480:17
+    |
+480 |                 CURRENT_EMULATOR_STATE.rom_name.as_ptr() as *const i8; // TODO: Convert to Cstring
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:484:17
+    |
+484 |                 CURRENT_EMULATOR_STATE.game_info.as_ref().unwrap().size;
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:486:17
+    |
+486 |                 CURRENT_EMULATOR_STATE.game_info.as_ref().unwrap().data;
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: a dangling pointer will be produced because the temporary `std::ffi::CString` will be dropped
+   --> src/main.rs:633:10
+    |
+631 |       let rom_name_cptr = CString::new(rom_name.clone())
+    |  _________________________-
+632 | |         .expect("Failed to create CString")
+    | |___________________________________________- this `std::ffi::CString` is deallocated at the end of the statement, bind it to a variable to extend its lifetime
+633 |           .as_ptr();
+    |            ^^^^^^ this pointer will immediately be invalid
+    |
+    = note: pointers do not have a lifetime; when calling `as_ptr` the `std::ffi::CString` will be deallocated at the end of the statement because nothing is referencing it as far as the type system is concerned
+    = help: you must make sure that the variable you bind the `std::ffi::CString` to lives at least as long as the pointer returned by the call to `as_ptr`
+    = help: in particular, if this pointer is returned from the current function, binding the `std::ffi::CString` inside the function will not suffice
+    = help: for more information, see <https://doc.rust-lang.org/reference/destructors.html>
+    = note: `#[warn(dangling_pointers_from_temporaries)]` on by default
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:655:25
+    |
+655 |     if let Some(data) = &CURRENT_EMULATOR_STATE.audio_data {
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+655 |     if let Some(data) = &raw const CURRENT_EMULATOR_STATE.audio_data {
+    |                          +++++++++
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:715:9
+    |
+715 |         &CURRENT_EMULATOR_STATE.rom_name,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+715 |         &raw const CURRENT_EMULATOR_STATE.rom_name,
+    |          +++++++++
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:730:9
+    |
+730 |         &CURRENT_EMULATOR_STATE.rom_name,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+730 |         &raw const CURRENT_EMULATOR_STATE.rom_name,
+    |          +++++++++
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:879:23
+    |
+879 |                 match &CURRENT_EMULATOR_STATE.av_info {
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+879 |                 match &raw const CURRENT_EMULATOR_STATE.av_info {
+    |                        +++++++++
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:915:30
+    |
+915 |         core_api = load_core(&CURRENT_EMULATOR_STATE.core_name);
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+915 |         core_api = load_core(&raw const CURRENT_EMULATOR_STATE.core_name);
+    |                               +++++++++
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:923:45
+    |
+923 |         println!("About to load ROM: {:?}", CURRENT_EMULATOR_STATE.rom_name);
+    |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+   --> src/main.rs:924:34
+    |
+924 |         load_rom_file(&core_api, &CURRENT_EMULATOR_STATE.rom_name);
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+924 |         load_rom_file(&core_api, &raw const CURRENT_EMULATOR_STATE.rom_name);
+    |                                   +++++++++
+
+warning: creating a shared reference to mutable static is discouraged
+    --> src/main.rs:1004:29
+     |
+1004 | ...                   CURRENT_EMULATOR_STATE.current_save_slot
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+    --> src/main.rs:1014:29
+     |
+1014 | ...                   CURRENT_EMULATOR_STATE.current_save_slot
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+
+warning: creating a shared reference to mutable static is discouraged
+    --> src/main.rs:1025:19
+     |
+1025 |             match &CURRENT_EMULATOR_STATE.frame_buffer {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+     |
+     = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/static-mut-references.html>
+     = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+     |
+1025 |             match &raw const CURRENT_EMULATOR_STATE.frame_buffer {
+     |                    +++++++++
+
+warning: `rustro_arch` (bin "rustro_arch") generated 41 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.32s
